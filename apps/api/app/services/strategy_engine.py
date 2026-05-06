@@ -38,11 +38,12 @@ class MicroBreakoutStrategy:
             return None
 
         move = (event.price - event.previous_close) / event.previous_close
-        if move < self.breakout_threshold or event.volume < self.min_volume:
+        effective_volume = self._effective_volume(event)
+        if move < self.breakout_threshold or effective_volume < self.min_volume:
             return None
 
         day_position = self._day_position(event)
-        volume_pressure = self._volume_pressure(event)
+        volume_pressure = self._volume_pressure(effective_volume)
         relative_day_volume = self._relative_day_volume(event)
         confidence_hint = self._confidence_hint(
             move=move,
@@ -61,7 +62,7 @@ class MicroBreakoutStrategy:
             proposed_stop=round(stop_price, 2),
             trigger_evidence=[
                 f"Price moved {move:.2%} above previous close, clearing the {self.breakout_threshold:.2%} early-breakout trigger.",
-                f"Latest bar volume {event.volume:,.0f} exceeded minimum {self.min_volume:,.0f}.",
+                f"Intraday volume pressure {effective_volume:,.0f} exceeded minimum {self.min_volume:,.0f}.",
                 self._range_evidence(day_position),
                 self._relative_volume_evidence(relative_day_volume),
                 "Candidate created by aggressive liquid-watchlist breakout strategy.",
@@ -81,10 +82,15 @@ class MicroBreakoutStrategy:
 
         return max(0.0, min(1.0, (event.price - event.day_low) / day_range))
 
-    def _volume_pressure(self, event: MarketEvent) -> float:
-        """Return a bounded score for latest-bar volume pressure."""
+    def _effective_volume(self, event: MarketEvent) -> float:
+        """Use recent intraday volume when available, then fall back to latest volume."""
 
-        return max(0.0, min(1.0, event.volume / max(self.min_volume * 4, 1)))
+        return max(event.volume, event.recent_volume or 0)
+
+    def _volume_pressure(self, effective_volume: float) -> float:
+        """Return a bounded score for intraday volume pressure."""
+
+        return max(0.0, min(1.0, effective_volume / max(self.min_volume * 4, 1)))
 
     def _relative_day_volume(self, event: MarketEvent) -> float | None:
         """Compare today's running volume with the prior session when available."""
@@ -185,7 +191,7 @@ class AggressiveStrategyEngine:
         symbol = event.symbol.upper()
         if symbol not in self.allowed_symbols or event.vwap is None or event.previous_close is None:
             return None
-        if event.price <= event.vwap or event.volume < self.min_volume:
+        if event.price <= event.vwap or not self._has_volume_pressure(event):
             return None
 
         previous_close = event.previous_bar_close or event.previous_close
@@ -218,7 +224,7 @@ class AggressiveStrategyEngine:
             or event.previous_close is None
         ):
             return None
-        if event.price <= event.opening_range_high or event.volume < self.min_volume:
+        if event.price <= event.opening_range_high or not self._has_volume_pressure(event):
             return None
 
         range_break = (event.price - event.opening_range_high) / event.opening_range_high
@@ -322,6 +328,9 @@ class AggressiveStrategyEngine:
             return 1.0
 
         return event.recent_volume / max(event.average_recent_volume * 10, 1)
+
+    def _has_volume_pressure(self, event: MarketEvent) -> bool:
+        return max(event.volume, event.recent_volume or 0) >= self.min_volume
 
     def _recent_volume_evidence(self, event: MarketEvent) -> str:
         if event.recent_volume is None or event.average_recent_volume is None:

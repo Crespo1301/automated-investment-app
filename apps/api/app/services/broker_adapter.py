@@ -412,6 +412,7 @@ class AlpacaBroker:
         """Build lightweight intraday context from recent minute bars."""
 
         try:
+            from alpaca.data.enums import DataFeed
             from alpaca.data.requests import StockBarsRequest
             from alpaca.data.timeframe import TimeFrame
         except Exception:
@@ -434,6 +435,7 @@ class AlpacaBroker:
                     timeframe=TimeFrame.Minute,
                     start=lookback_start.astimezone(UTC),
                     end=eastern_now.astimezone(UTC),
+                    feed=DataFeed.IEX,
                 )
             )
         except Exception:
