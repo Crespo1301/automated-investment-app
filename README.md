@@ -101,6 +101,7 @@ Autopilot is now a supervised local loop:
 - Entry execution is locked by default with `INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=false`.
 - Exit execution is locked by default with `INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=false`.
 - Keep entry execution locked until exit checks have been observed and intentionally enabled.
+- Synthetic demo-market entries are blocked by default with `INVESTMENT_APP_ALLOW_DEMO_LIVE_ENTRIES=false`.
 - The loop disables itself and enables the kill switch if a runtime error occurs.
 - Use `npm run autopilot:status` and `npm run autopilot:once` for diagnostics.
 
@@ -122,7 +123,8 @@ Recommended morning modes:
   entries locked, and observe exit signals before allowing autonomous buys.
 - **Autonomous Entry Mode**: only after exit checks are verified, turn on both
   `INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=true` and
-  `INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=true`, then run `npm run dev:autopilot`.
+  `INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=true`, then wire real market data before
+  allowing live entries.
 
 The Live Performance panel refreshes every 15 seconds through a same-origin web
 proxy and charts local broker reconciliation history. It reflects snapshots the

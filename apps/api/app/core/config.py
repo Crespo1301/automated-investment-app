@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     autopilot_allow_exits: bool = False
     autopilot_stop_loss_percent: float = 2.0
     autopilot_take_profit_percent: float = 3.0
+    allow_demo_live_entries: bool = False
     alpaca_api_key: str | None = None
     alpaca_secret_key: str | None = None
     alpaca_paper: bool = True

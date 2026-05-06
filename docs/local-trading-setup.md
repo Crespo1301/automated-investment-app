@@ -91,6 +91,7 @@ Autopilot rules:
 - entry execution is locked by default with `INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=false`
 - exit execution is locked by default with `INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=false`
 - keep the entry lock until exit checks have been observed and intentionally enabled
+- synthetic demo-market entries are blocked by default with `INVESTMENT_APP_ALLOW_DEMO_LIVE_ENTRIES=false`
 - the loop uses the same risk engine, duplicate-order checks, market-hours guard, and kill switch
 - the loop enables the kill switch and disables itself on runtime errors
 - use `npm run autopilot:status` and `npm run autopilot:once` for diagnostics
@@ -102,7 +103,8 @@ Recommended morning modes:
   entries locked, and observe signals before autonomous buys.
 - **Autonomous Entry Mode**: only after exit checks are verified, set both
   `INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=true` and
-  `INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=true`, then run the autopilot loop.
+  `INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=true`, then wire real market data before
+  allowing live entries.
 
 The dashboard Protection Plan is read-only. It checks current broker positions
 against recent orders, flags positions without open sell orders, and suggests a

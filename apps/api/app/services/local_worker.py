@@ -159,6 +159,22 @@ def run_single_cycle(
         )
         execution_intent = None
 
+    if (
+        execution_intent is not None
+        and settings.trading_mode == "live"
+        and event.source == "local-demo"
+        and not settings.allow_demo_live_entries
+    ):
+        risk_decision = RiskDecision(
+            state="rejected",
+            candidate_id=candidate.candidate_id,
+            reasons=[
+                "Live entries from the synthetic local-demo market event are disabled.",
+                "Wire real Alpaca market data before enabling autonomous entries.",
+            ],
+        )
+        execution_intent = None
+
     if execution_intent is not None and broker is not None and settings.trading_mode == "live":
         clock = broker.get_market_clock()
         if queue_for_open:

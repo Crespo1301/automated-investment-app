@@ -54,6 +54,8 @@ def _find_blockers(clock: MarketClockStatus) -> list[str]:
         blockers.append("Regular market is currently closed.")
     if not settings.autopilot_allow_entries:
         blockers.append("Autopilot entry execution is locked.")
+    if settings.autopilot_allow_entries and not settings.allow_demo_live_entries:
+        blockers.append("Autonomous entries need real market data; synthetic demo entries are blocked.")
     if not settings.autopilot_allow_exits:
         blockers.append("Autopilot exit execution is locked.")
 

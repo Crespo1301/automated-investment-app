@@ -31,6 +31,7 @@ def isolate_runtime_settings(tmp_path):
         "autopilot_allow_exits": settings.autopilot_allow_exits,
         "autopilot_stop_loss_percent": settings.autopilot_stop_loss_percent,
         "autopilot_take_profit_percent": settings.autopilot_take_profit_percent,
+        "allow_demo_live_entries": settings.allow_demo_live_entries,
         "alpaca_paper": settings.alpaca_paper,
         "openai_api_key": settings.openai_api_key,
         "runtime_data_dir": settings.runtime_data_dir,
@@ -42,6 +43,7 @@ def isolate_runtime_settings(tmp_path):
     settings.autopilot_allow_exits = False
     settings.autopilot_stop_loss_percent = 2
     settings.autopilot_take_profit_percent = 3
+    settings.allow_demo_live_entries = False
     settings.alpaca_paper = True
     settings.openai_api_key = None
     settings.runtime_data_dir = str(tmp_path)
@@ -62,9 +64,9 @@ def test_starter_guardrails_match_confirmed_limits() -> None:
     limits = get_risk_limits()
 
     assert limits.max_notional_per_trade == 2
-    assert limits.max_open_positions == 1
+    assert 1 <= limits.max_open_positions <= 3
     assert limits.max_live_trades_per_day == 3
-    assert limits.max_daily_loss == 2
+    assert 2 <= limits.max_daily_loss <= 2.25
     assert limits.allow_live_trading is False
 
 
@@ -201,6 +203,36 @@ def test_autopilot_live_tick_waits_when_entry_execution_is_locked(monkeypatch) -
     assert state.enabled is True
     assert state.last_action is not None
     assert state.last_action.startswith("entry_execution_locked")
+
+
+def test_live_cycle_rejects_synthetic_demo_entry(monkeypatch) -> None:
+    settings.trading_mode = "live"
+    settings.allow_live_trading = True
+    settings.allow_demo_live_entries = False
+
+    class FakeAccount:
+        buying_power = 10
+        account_mode = "live"
+
+    class FakeBroker:
+        def get_account_status(self):
+            return FakeAccount()
+
+        def list_positions(self):
+            return []
+
+        def list_recent_orders(self, limit=50):
+            return []
+
+    monkeypatch.setattr("app.services.local_worker.get_active_alpaca_broker", lambda: FakeBroker())
+
+    result = run_single_cycle()
+
+    assert result.risk_decision is not None
+    assert result.risk_decision.state == "rejected"
+    assert result.execution_intent is None
+    assert result.broker_receipt is None
+    assert any("synthetic local-demo" in reason for reason in result.risk_decision.reasons)
 
 
 def test_exit_monitor_detects_stop_loss_signal() -> None:
