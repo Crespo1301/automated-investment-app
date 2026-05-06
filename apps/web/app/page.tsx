@@ -166,6 +166,17 @@ async function runTradingCycle(formData: FormData) {
   await postApi("/api/trading/run-cycle");
 }
 
+async function queueForOpen(formData: FormData) {
+  "use server";
+
+  const confirmation = String(formData.get("confirmation") || "").trim();
+  if (confirmation !== "QUEUE OPEN") {
+    return;
+  }
+
+  await postApi("/api/trading/queue-for-open");
+}
+
 async function getReconciliation(): Promise<BrokerReconciliationSnapshot | null> {
   try {
     const response = await fetch(`${apiBaseUrl}/api/broker/reconciliation`, {
@@ -392,6 +403,20 @@ export default async function HomePage() {
 
                 <div className="daily-step trading-action">
                   <span className="step-number">5</span>
+                  <div>
+                    <strong>Queue For Open</strong>
+                    <p className="thesis">
+                      Type QUEUE OPEN to submit one regular-session order while the market is closed.
+                    </p>
+                  </div>
+                  <form action={queueForOpen} className="inline-form">
+                    <input name="confirmation" placeholder="QUEUE OPEN" />
+                    <button className="secondary-action" disabled={!account || marketOpen} type="submit">Queue</button>
+                  </form>
+                </div>
+
+                <div className="daily-step trading-action">
+                  <span className="step-number">6</span>
                   <div>
                     <strong>Run One Cycle</strong>
                     <p className="thesis">

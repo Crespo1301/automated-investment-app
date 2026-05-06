@@ -15,7 +15,7 @@ from app.services.audit_store import (
     set_kill_switch,
     summarize_audit,
 )
-from app.services.local_worker import run_single_cycle
+from app.services.local_worker import run_queue_for_open_cycle, run_single_cycle
 
 
 def main() -> None:
@@ -53,6 +53,11 @@ def main() -> None:
         help="Cancel all currently open orders on the active paper/live broker configuration.",
     )
     parser.add_argument(
+        "--queue-for-open",
+        action="store_true",
+        help="Submit one guarded regular-session order while the market is closed.",
+    )
+    parser.add_argument(
         "--safety-status",
         action="store_true",
         help="Show local audit, kill-switch, and market-clock state.",
@@ -77,6 +82,7 @@ def main() -> None:
             args.reconcile_alpaca,
             args.reconcile_broker,
             args.cancel_open_orders,
+            args.queue_for_open,
             args.safety_status,
             bool(args.enable_kill_switch),
             args.disable_kill_switch,
@@ -103,6 +109,8 @@ def main() -> None:
                 "canceled_orders": get_active_alpaca_broker().cancel_open_orders(),
             }
             record_cancel_result(result)
+        elif args.queue_for_open:
+            result = run_queue_for_open_cycle()
         elif args.safety_status:
             broker = get_active_alpaca_broker()
             result = summarize_audit(market_clock=broker.get_market_clock())

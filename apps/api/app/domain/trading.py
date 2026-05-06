@@ -129,6 +129,7 @@ class ExecutionIntent(BaseModel):
     symbol: str
     side: TradeSide
     order_type: Literal["market"] = "market"
+    session_policy: Literal["immediate", "regular_open_queue"] = "immediate"
     approved_notional: float
     mode: TradingMode
     client_order_id: str

@@ -9,7 +9,11 @@ from app.services.broker_adapter import (
     MissingBrokerCredentialsError,
     missing_alpaca_credential_names,
 )
-from app.services.local_worker import get_risk_limits, run_single_cycle
+from app.services.local_worker import (
+    get_risk_limits,
+    run_queue_for_open_cycle,
+    run_single_cycle,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -17,12 +21,14 @@ def isolate_runtime_settings(tmp_path):
     original = {
         "trading_mode": settings.trading_mode,
         "allow_live_trading": settings.allow_live_trading,
+        "allow_outside_market_hours": settings.allow_outside_market_hours,
         "alpaca_paper": settings.alpaca_paper,
         "openai_api_key": settings.openai_api_key,
         "runtime_data_dir": settings.runtime_data_dir,
     }
     settings.trading_mode = "paper"
     settings.allow_live_trading = False
+    settings.allow_outside_market_hours = False
     settings.alpaca_paper = True
     settings.openai_api_key = None
     settings.runtime_data_dir = str(tmp_path)
@@ -111,3 +117,16 @@ def test_local_heuristic_score_is_bounded_and_explainable() -> None:
     assert 0.55 <= scored.ai_score.score <= 0.82
     assert "Local heuristic blended" in scored.ai_score.summary
     assert any("Fallback score is capped" in concern for concern in scored.ai_score.concerns)
+
+
+def test_queue_for_open_requires_live_permission() -> None:
+    settings.trading_mode = "paper"
+    settings.allow_live_trading = False
+
+    result = run_queue_for_open_cycle()
+
+    assert result.risk_decision is not None
+    assert result.risk_decision.state == "rejected"
+    assert result.execution_intent is None
+    assert result.broker_receipt is None
+    assert any("Queue-for-open requires live trading mode" in reason for reason in result.risk_decision.reasons)

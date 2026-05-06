@@ -62,9 +62,16 @@ Use `http://localhost:3000` as the main operating surface:
 2. Review open orders, positions, buying power, kill switch, and market clock.
 3. Cancel queued/open orders before placing anything new when the state is unclear.
 4. Enable the kill switch before stepping away.
-5. Type `RUN LIVE` only when intentionally running one live guarded cycle.
+5. Type `QUEUE OPEN` only when intentionally queueing one regular-session order before market open.
+6. Type `RUN LIVE` only when intentionally running one live guarded cycle.
 
 If FastAPI is offline, the dashboard disables live actions and shows a backend warning.
+
+`Queue For Open` is not an extended-hours trading feature. It keeps the normal
+regular-session market order path and uses the broker queue while regular market
+hours are closed. True extended-hours execution should be added later as a
+separate limit-order workflow because Alpaca requires extended-hours equity
+orders to be limit orders.
 
 Run:
 
@@ -145,6 +152,14 @@ cd apps/api
 source .venv/bin/activate
 python -m app.worker --cancel-open-orders
 python -m app.worker --reconcile-broker
+```
+
+Queue one guarded regular-session order while the regular market is closed:
+
+```bash
+cd apps/api
+source .venv/bin/activate
+python -m app.worker --queue-for-open
 ```
 
 The local audit trail is written under `.runtime/` and should remain uncommitted.

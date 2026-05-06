@@ -72,11 +72,17 @@ Daily operator flow:
 2. Review account value, buying power, open orders, positions, kill switch, and market clock.
 3. Cancel queued/open orders when needed before placing anything new.
 4. Enable the kill switch before stepping away or changing settings.
-5. Run one cycle only when the API is online, the market/session state is acceptable, and the confirmation field is typed exactly as `RUN LIVE`.
+5. Use `Queue For Open` only when the regular market is closed and you intentionally type `QUEUE OPEN`.
+6. Use `Run One Cycle` only when the API is online, the market/session state is acceptable, and the confirmation field is typed exactly as `RUN LIVE`.
 
 The dashboard is an operator console, not a set-and-forget trading bot. Keep early
 live usage attended and tiny while the app is still building persistent history,
 review tools, and safer automation.
+
+`Queue For Open` does not turn on extended-hours trading. It submits the same
+regular-session day market order path through the existing risk gate while the
+regular market is closed. True pre-market or after-hours execution should use a
+separate limit-order path with explicit extended-hours controls.
 
 ### API
 
@@ -124,6 +130,7 @@ python -m app.worker --reconcile-broker
 python -m app.worker --safety-status
 python -m app.worker --enable-kill-switch "reason"
 python -m app.worker --cancel-open-orders
+python -m app.worker --queue-for-open
 ```
 
 ## Environment Notes

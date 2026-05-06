@@ -87,6 +87,7 @@ def get_portfolio_state_from_broker(broker: AlpacaBroker) -> PortfolioState:
 def run_single_cycle(
     event: MarketEvent | None = None,
     use_alpaca_paper: bool = False,
+    queue_for_open: bool = False,
 ) -> PipelineRunResult:
     """Run one end-to-end candidate evaluation cycle.
 
@@ -134,6 +135,18 @@ def run_single_cycle(
         scored_candidate,
         portfolio_state,
     )
+    if queue_for_open and (
+        settings.trading_mode != "live" or not settings.allow_live_trading
+    ):
+        risk_decision = RiskDecision(
+            state="rejected",
+            candidate_id=candidate.candidate_id,
+            reasons=[
+                "Queue-for-open requires live trading mode and explicit live permission.",
+            ],
+        )
+        execution_intent = None
+
     safety_state = get_safety_state()
     if execution_intent is not None and safety_state.kill_switch_enabled:
         risk_decision = RiskDecision(
@@ -148,7 +161,21 @@ def run_single_cycle(
 
     if execution_intent is not None and broker is not None and settings.trading_mode == "live":
         clock = broker.get_market_clock()
-        if not clock.is_open and not settings.allow_outside_market_hours:
+        if queue_for_open:
+            if clock.is_open:
+                risk_decision = RiskDecision(
+                    state="rejected",
+                    candidate_id=candidate.candidate_id,
+                    reasons=[
+                        "Regular market is already open. Use the normal live-cycle action instead.",
+                    ],
+                )
+                execution_intent = None
+            else:
+                execution_intent = execution_intent.model_copy(
+                    update={"session_policy": "regular_open_queue"}
+                )
+        elif not clock.is_open and not settings.allow_outside_market_hours:
             risk_decision = RiskDecision(
                 state="rejected",
                 candidate_id=candidate.candidate_id,
@@ -192,3 +219,9 @@ def run_single_cycle(
     )
     record_pipeline_run(result)
     return result
+
+
+def run_queue_for_open_cycle(event: MarketEvent | None = None) -> PipelineRunResult:
+    """Run one guarded cycle that can queue a regular-session order for open."""
+
+    return run_single_cycle(event=event, queue_for_open=True)

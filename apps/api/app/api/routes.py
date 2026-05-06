@@ -23,7 +23,11 @@ from app.services.demo_data import (
     get_pipeline_preview,
     get_system_profile,
 )
-from app.services.local_worker import get_risk_limits, run_single_cycle
+from app.services.local_worker import (
+    get_risk_limits,
+    run_queue_for_open_cycle,
+    run_single_cycle,
+)
 
 
 router = APIRouter()
@@ -110,6 +114,17 @@ def trading_run_cycle() -> PipelineRunResult:
     """Run one configured trading cycle through the active risk and broker path."""
 
     return run_single_cycle()
+
+
+@router.post(
+    "/api/trading/queue-for-open",
+    response_model=PipelineRunResult,
+    tags=["trading"],
+)
+def trading_queue_for_open() -> PipelineRunResult:
+    """Queue one guarded regular-session order while the market is closed."""
+
+    return run_queue_for_open_cycle()
 
 
 @router.get(
