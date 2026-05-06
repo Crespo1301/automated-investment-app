@@ -3,8 +3,15 @@
 from datetime import UTC, datetime
 
 from app.core.config import configured_symbols, settings
-from app.domain.trading import MarketEvent, PipelineRunResult, PortfolioState, RiskLimits
+from app.domain.trading import (
+    MarketEvent,
+    PipelineRunResult,
+    PortfolioState,
+    RiskDecision,
+    RiskLimits,
+)
 from app.services.ai_scorer import TradeScorer
+from app.services.audit_store import get_safety_state, record_pipeline_run
 from app.services.broker_adapter import (
     AlpacaBroker,
     get_active_alpaca_broker,
@@ -25,6 +32,8 @@ def get_risk_limits() -> RiskLimits:
         max_live_trades_per_day=settings.max_live_trades_per_day,
         max_daily_loss=settings.max_daily_loss,
         allow_live_trading=settings.allow_live_trading,
+        allow_outside_market_hours=settings.allow_outside_market_hours,
+        duplicate_order_lookback_minutes=settings.duplicate_order_lookback_minutes,
     )
 
 
@@ -125,12 +134,55 @@ def run_single_cycle(
         scored_candidate,
         portfolio_state,
     )
+    safety_state = get_safety_state()
+    if execution_intent is not None and safety_state.kill_switch_enabled:
+        risk_decision = RiskDecision(
+            state="rejected",
+            candidate_id=candidate.candidate_id,
+            reasons=[
+                "Operator kill switch is enabled.",
+                safety_state.reason or "No kill switch reason was provided.",
+            ],
+        )
+        execution_intent = None
+
+    if execution_intent is not None and broker is not None and settings.trading_mode == "live":
+        clock = broker.get_market_clock()
+        if not clock.is_open and not settings.allow_outside_market_hours:
+            risk_decision = RiskDecision(
+                state="rejected",
+                candidate_id=candidate.candidate_id,
+                reasons=[
+                    "Market is closed and outside-hours order queueing is disabled.",
+                    f"Next open: {clock.next_open.isoformat() if clock.next_open else 'unknown'}.",
+                ],
+            )
+            execution_intent = None
+
+    if execution_intent is not None and broker is not None and settings.trading_mode == "live":
+        duplicate_order = broker.has_open_duplicate_order(
+            symbol=execution_intent.symbol,
+            side=execution_intent.side,
+            notional=execution_intent.approved_notional,
+            strategy_prefix=f"{candidate.strategy_id}-",
+        )
+        if duplicate_order is not None:
+            risk_decision = RiskDecision(
+                state="rejected",
+                candidate_id=candidate.candidate_id,
+                reasons=[
+                    "A matching open broker order already exists.",
+                    f"Duplicate order id: {duplicate_order.broker_order_id}.",
+                    f"Duplicate status: {duplicate_order.status}.",
+                ],
+            )
+            execution_intent = None
+
     broker_receipt = None
     if execution_intent is not None:
         broker = broker or (get_alpaca_paper_broker() if use_alpaca_paper else get_broker())
         broker_receipt = broker.submit_order(execution_intent)
-
-    return PipelineRunResult(
+    result = PipelineRunResult(
         event=event,
         candidate=candidate,
         scored_candidate=scored_candidate,
@@ -138,3 +190,5 @@ def run_single_cycle(
         execution_intent=execution_intent,
         broker_receipt=broker_receipt,
     )
+    record_pipeline_run(result)
+    return result

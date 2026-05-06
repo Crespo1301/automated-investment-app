@@ -109,6 +109,10 @@ a {
   background: #4ade80;
 }
 
+.danger-dot {
+  background: var(--danger);
+}
+
 .workspace {
   padding: 28px;
   min-width: 0;

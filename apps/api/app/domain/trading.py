@@ -6,7 +6,7 @@ live trading behavior remains auditable.
 """
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -89,6 +89,25 @@ class RiskLimits(BaseModel):
     max_live_trades_per_day: int
     max_daily_loss: float
     allow_live_trading: bool
+    allow_outside_market_hours: bool = False
+    duplicate_order_lookback_minutes: int = 390
+
+
+class MarketClockStatus(BaseModel):
+    """Broker market clock state used to block unintended queued orders."""
+
+    is_open: bool
+    timestamp: datetime | None = None
+    next_open: datetime | None = None
+    next_close: datetime | None = None
+
+
+class SafetyState(BaseModel):
+    """Operator safety state persisted outside broker state."""
+
+    kill_switch_enabled: bool = False
+    reason: str | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class RiskDecision(BaseModel):
@@ -180,6 +199,21 @@ class BrokerReconciliationSnapshot(BaseModel):
     positions: list[BrokerPositionSummary]
 
 
+class AuditSummary(BaseModel):
+    """Compact local audit status for the operator dashboard."""
+
+    pipeline_runs: int = 0
+    reconciliation_snapshots: int = 0
+    order_events: int = 0
+    last_event_at: datetime | None = None
+    latest_order_status: str | None = None
+    latest_order_symbol: str | None = None
+    latest_order_notional: float | None = None
+    safety_state: SafetyState = Field(default_factory=SafetyState)
+    market_clock: MarketClockStatus | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
 class PipelineRunResult(BaseModel):
     """One local worker cycle result for debugging and dashboard previews."""
 
@@ -189,3 +223,12 @@ class PipelineRunResult(BaseModel):
     risk_decision: RiskDecision | None
     execution_intent: ExecutionIntent | None
     broker_receipt: BrokerOrderReceipt | None
+
+
+class AuditEvent(BaseModel):
+    """Append-only local audit event with a typed payload."""
+
+    event_id: str = Field(default_factory=lambda: new_id("audit"))
+    event_type: str
+    payload: dict[str, Any]
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

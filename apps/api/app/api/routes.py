@@ -9,8 +9,13 @@ from app.domain.models import (
     SystemProfile,
 )
 from app.domain.trading import BrokerAccountStatus, PipelineRunResult, RiskLimits
-from app.domain.trading import BrokerReconciliationSnapshot
+from app.domain.trading import AuditSummary, BrokerReconciliationSnapshot, SafetyState
 from app.services.broker_adapter import get_active_alpaca_broker, get_alpaca_paper_broker
+from app.services.audit_store import (
+    record_reconciliation_snapshot,
+    set_kill_switch,
+    summarize_audit,
+)
 from app.services.demo_data import (
     get_dashboard_snapshot,
     get_handoff_catalog,
@@ -136,4 +141,40 @@ def alpaca_reconciliation() -> BrokerReconciliationSnapshot:
 def active_broker_reconciliation() -> BrokerReconciliationSnapshot:
     """Read-only account, orders, and positions for the active paper/live config."""
 
-    return get_active_alpaca_broker().get_reconciliation_snapshot()
+    snapshot = get_active_alpaca_broker().get_reconciliation_snapshot()
+    record_reconciliation_snapshot(snapshot)
+    return snapshot
+
+
+@router.get(
+    "/api/safety/status",
+    response_model=AuditSummary,
+    tags=["safety"],
+)
+def safety_status() -> AuditSummary:
+    """Return local audit, kill-switch, and active market-clock state."""
+
+    broker = get_active_alpaca_broker()
+    return summarize_audit(market_clock=broker.get_market_clock())
+
+
+@router.post(
+    "/api/safety/kill-switch/enable",
+    response_model=SafetyState,
+    tags=["safety"],
+)
+def enable_kill_switch(reason: str = "Enabled from API.") -> SafetyState:
+    """Enable the local operator kill switch."""
+
+    return set_kill_switch(True, reason=reason)
+
+
+@router.post(
+    "/api/safety/kill-switch/disable",
+    response_model=SafetyState,
+    tags=["safety"],
+)
+def disable_kill_switch() -> SafetyState:
+    """Disable the local operator kill switch."""
+
+    return set_kill_switch(False, reason="Disabled from API.")

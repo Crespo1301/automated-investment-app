@@ -9,6 +9,12 @@ from app.services.broker_adapter import (
     get_active_alpaca_broker,
     get_alpaca_paper_broker,
 )
+from app.services.audit_store import (
+    record_cancel_result,
+    record_reconciliation_snapshot,
+    set_kill_switch,
+    summarize_audit,
+)
 from app.services.local_worker import run_single_cycle
 
 
@@ -46,6 +52,21 @@ def main() -> None:
         action="store_true",
         help="Cancel all currently open orders on the active paper/live broker configuration.",
     )
+    parser.add_argument(
+        "--safety-status",
+        action="store_true",
+        help="Show local audit, kill-switch, and market-clock state.",
+    )
+    parser.add_argument(
+        "--enable-kill-switch",
+        metavar="REASON",
+        help="Block future submissions until the kill switch is disabled.",
+    )
+    parser.add_argument(
+        "--disable-kill-switch",
+        action="store_true",
+        help="Disable the local operator kill switch.",
+    )
     args = parser.parse_args()
 
     try:
@@ -56,6 +77,9 @@ def main() -> None:
             args.reconcile_alpaca,
             args.reconcile_broker,
             args.cancel_open_orders,
+            args.safety_status,
+            bool(args.enable_kill_switch),
+            args.disable_kill_switch,
         ]
         if sum(bool(action) for action in selected_actions) > 1:
             parser.error("Choose only one worker action at a time.")
@@ -68,14 +92,24 @@ def main() -> None:
             result = run_single_cycle(use_alpaca_paper=True)
         elif args.reconcile_alpaca:
             result = get_alpaca_paper_broker().get_reconciliation_snapshot()
+            record_reconciliation_snapshot(result)
         elif args.reconcile_broker:
             result = get_active_alpaca_broker().get_reconciliation_snapshot()
+            record_reconciliation_snapshot(result)
         elif args.cancel_open_orders:
             result = {
                 "broker": "alpaca",
                 "mode": "active-config",
                 "canceled_orders": get_active_alpaca_broker().cancel_open_orders(),
             }
+            record_cancel_result(result)
+        elif args.safety_status:
+            broker = get_active_alpaca_broker()
+            result = summarize_audit(market_clock=broker.get_market_clock())
+        elif args.enable_kill_switch:
+            result = set_kill_switch(True, reason=args.enable_kill_switch)
+        elif args.disable_kill_switch:
+            result = set_kill_switch(False, reason="Operator disabled the kill switch.")
         else:
             result = run_single_cycle()
     except MissingBrokerCredentialsError as exc:

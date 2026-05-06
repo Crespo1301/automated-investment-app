@@ -5,9 +5,12 @@ constructed only when credentials are present and can target paper or live
 depending on runtime settings.
 """
 
+from datetime import UTC, datetime, timedelta
+
 from app.core.config import settings
 from app.domain.trading import (
     BrokerAccountStatus,
+    MarketClockStatus,
     BrokerOrderReceipt,
     BrokerOrderSummary,
     BrokerPositionSummary,
@@ -104,6 +107,17 @@ class AlpacaBroker:
             pattern_day_trader=bool(account.pattern_day_trader),
         )
 
+    def get_market_clock(self) -> MarketClockStatus:
+        """Fetch the broker market clock."""
+
+        clock = self.client.get_clock()
+        return MarketClockStatus(
+            is_open=bool(clock.is_open),
+            timestamp=getattr(clock, "timestamp", None),
+            next_open=getattr(clock, "next_open", None),
+            next_close=getattr(clock, "next_close", None),
+        )
+
     def submit_order(self, intent: ExecutionIntent) -> BrokerOrderReceipt:
         """Submit an approved execution intent to Alpaca."""
 
@@ -138,6 +152,45 @@ class AlpacaBroker:
         request = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=limit)
         orders = self.client.get_orders(filter=request)
         return [self._order_to_summary(order) for order in orders]
+
+    def has_open_duplicate_order(
+        self,
+        symbol: str,
+        side: str,
+        notional: float,
+        strategy_prefix: str,
+    ) -> BrokerOrderSummary | None:
+        """Return the first open same-symbol order that looks like a duplicate."""
+
+        open_statuses = {
+            "accepted",
+            "new",
+            "pending_new",
+            "partially_filled",
+            "pending_replace",
+            "pending_cancel",
+        }
+        cutoff = datetime.now(UTC) - timedelta(
+            minutes=max(1, settings.duplicate_order_lookback_minutes)
+        )
+        for order in self.list_recent_orders(limit=50):
+            status = order.status.split(".")[-1].lower()
+            order_side = order.side.split(".")[-1].lower()
+            client_order_id = order.client_order_id or ""
+            submitted_notional = order.submitted_notional or 0
+            if status not in open_statuses:
+                continue
+            if order.submitted_at is not None and order.submitted_at.astimezone(UTC) < cutoff:
+                continue
+            if order.symbol.upper() != symbol.upper() or order_side != side.lower():
+                continue
+            if not client_order_id.startswith(strategy_prefix):
+                continue
+            if abs(submitted_notional - notional) > 0.01:
+                continue
+            return order
+
+        return None
 
     def list_positions(self) -> list[BrokerPositionSummary]:
         """Fetch open Alpaca positions in a dashboard-safe shape."""

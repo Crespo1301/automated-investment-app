@@ -1,5 +1,6 @@
 import { StatusCard } from "@/components/status-card";
 import type {
+  AuditSummary,
   BrokerReconciliationSnapshot,
   DashboardSnapshot,
   PipelinePreview,
@@ -111,7 +112,23 @@ const apiBaseUrl = process.env.INVESTMENT_WEB_API_BASE_URL ?? "http://127.0.0.1:
 
 async function getReconciliation(): Promise<BrokerReconciliationSnapshot | null> {
   try {
-    const response = await fetch(`${apiBaseUrl}/api/broker/alpaca/reconciliation`, {
+    const response = await fetch(`${apiBaseUrl}/api/broker/reconciliation`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return response.json();
+  } catch {
+    return null;
+  }
+}
+
+async function getSafetyStatus(): Promise<AuditSummary | null> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/safety/status`, {
       cache: "no-store",
     });
 
@@ -142,9 +159,12 @@ function cleanEnum(value: string) {
 
 export default async function HomePage() {
   const reconciliation = await getReconciliation();
+  const safety = await getSafetyStatus();
   const account = reconciliation?.account;
   const orders = reconciliation?.orders ?? [];
   const positions = reconciliation?.positions ?? [];
+  const killSwitchEnabled = safety?.safety_state.kill_switch_enabled ?? false;
+  const marketOpen = safety?.market_clock?.is_open ?? false;
   const dashboardMetrics = account
     ? [
         {
@@ -188,8 +208,8 @@ export default async function HomePage() {
           ))}
         </nav>
         <div className="sidebar-footer">
-          <span className="status-dot" />
-          Paper-safe mode
+          <span className={killSwitchEnabled ? "status-dot danger-dot" : "status-dot"} />
+          {killSwitchEnabled ? "Kill switch on" : account ? `${account.account_mode} broker` : "API offline"}
         </div>
       </aside>
 
@@ -204,16 +224,26 @@ export default async function HomePage() {
             <span className="environment-badge">
               {account ? `Alpaca ${account.account_mode}` : "API offline"}
             </span>
-            <button className="primary-action" type="button">Run local cycle</button>
+            <span className={marketOpen ? "state-pill state-healthy" : "state-pill state-warning"}>
+              {marketOpen ? "Market open" : "Market closed"}
+            </span>
           </div>
         </header>
 
-        <section className={account ? "notice-row" : "notice-row warning-row"}>
-          <strong>{account ? "Paper account connected." : "Backend API offline."}</strong>
+        <section className={account && !killSwitchEnabled ? "notice-row" : "notice-row warning-row"}>
+          <strong>
+            {killSwitchEnabled
+              ? "Kill switch is enabled."
+              : account
+                ? `${account.account_mode} account connected.`
+                : "Backend API offline."}
+          </strong>
           <span>
-            {account
-              ? `Read-only dashboard data is coming from Alpaca account ${account.account_id_hint}; live trading remains locked.`
-              : "Start the FastAPI server to show live Alpaca paper reconciliation data."}
+            {killSwitchEnabled
+              ? safety?.safety_state.reason ?? "Submissions are blocked until the operator disables the kill switch."
+              : account
+                ? `Read-only dashboard data is coming from Alpaca account ${account.account_id_hint}.`
+              : "Start the FastAPI server to show active Alpaca reconciliation data."}
           </span>
         </section>
 
@@ -282,7 +312,7 @@ export default async function HomePage() {
               <div className="section-title">
                 <div>
                   <h2>Recent broker orders</h2>
-                  <p>Read-only Alpaca paper order reconciliation.</p>
+                  <p>Read-only Alpaca order reconciliation from the active account.</p>
                 </div>
               </div>
               <div className="order-table">
@@ -308,7 +338,7 @@ export default async function HomePage() {
                     </div>
                   ))
                 ) : (
-                  <div className="empty-state">No Alpaca paper orders returned yet.</div>
+                  <div className="empty-state">No Alpaca orders returned yet.</div>
                 )}
               </div>
             </article>
@@ -364,16 +394,44 @@ export default async function HomePage() {
             <article className="panel">
               <div className="section-title">
                 <div>
-                  <h2>Build notes</h2>
-                  <p>Integration work before live deployment.</p>
+                  <h2>Safety Controls</h2>
+                  <p>Local audit trail and execution guardrails.</p>
                 </div>
               </div>
               <div className="list">
-                {demoSnapshot.alerts.map((alert) => (
-                  <div className="list-item" key={alert}>
-                    <p className="thesis">{alert}</p>
+                <div className="list-item">
+                  <div className="row-top">
+                    <strong>Kill Switch</strong>
+                    <span className={killSwitchEnabled ? "state-pill state-blocked" : "state-pill state-healthy"}>
+                      {killSwitchEnabled ? "enabled" : "clear"}
+                    </span>
                   </div>
-                ))}
+                  <p className="thesis">
+                    {safety?.safety_state.reason ?? "No local kill-switch reason recorded."}
+                  </p>
+                </div>
+                <div className="list-item">
+                  <div className="row-top">
+                    <strong>Market Session</strong>
+                    <span className={marketOpen ? "state-pill state-healthy" : "state-pill state-warning"}>
+                      {marketOpen ? "open" : "closed"}
+                    </span>
+                  </div>
+                  <p className="thesis">
+                    Next open: {safety?.market_clock?.next_open ?? "unknown"}
+                  </p>
+                </div>
+                <div className="list-item">
+                  <div className="row-top">
+                    <strong>Audit Trail</strong>
+                    <span className="state-pill">{safety?.order_events ?? 0} events</span>
+                  </div>
+                  <p className="thesis">
+                    {safety
+                      ? `${safety.pipeline_runs} runs, ${safety.reconciliation_snapshots} reconciliation snapshots.`
+                      : "Start the API to load local audit state."}
+                  </p>
+                </div>
               </div>
             </article>
           </div>

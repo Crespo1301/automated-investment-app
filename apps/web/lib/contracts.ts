@@ -82,3 +82,29 @@ export type BrokerReconciliationSnapshot = {
   orders: BrokerOrderSummary[];
   positions: BrokerPositionSummary[];
 };
+
+export type MarketClockStatus = {
+  is_open: boolean;
+  timestamp?: string | null;
+  next_open?: string | null;
+  next_close?: string | null;
+};
+
+export type SafetyState = {
+  kill_switch_enabled: boolean;
+  reason?: string | null;
+  updated_at: string;
+};
+
+export type AuditSummary = {
+  pipeline_runs: number;
+  reconciliation_snapshots: number;
+  order_events: number;
+  last_event_at?: string | null;
+  latest_order_status?: string | null;
+  latest_order_symbol?: string | null;
+  latest_order_notional?: number | null;
+  safety_state: SafetyState;
+  market_clock?: MarketClockStatus | null;
+  notes: string[];
+};

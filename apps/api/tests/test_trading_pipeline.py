@@ -1,11 +1,34 @@
+import pytest
+
 from app.core.config import configured_symbols
 from app.core.config import settings
+from app.domain.trading import TradeCandidate
+from app.services.ai_scorer import TradeScorer
 from app.services.broker_adapter import (
     LocalPaperBroker,
     MissingBrokerCredentialsError,
     missing_alpaca_credential_names,
 )
 from app.services.local_worker import get_risk_limits, run_single_cycle
+
+
+@pytest.fixture(autouse=True)
+def isolate_runtime_settings(tmp_path):
+    original = {
+        "trading_mode": settings.trading_mode,
+        "allow_live_trading": settings.allow_live_trading,
+        "alpaca_paper": settings.alpaca_paper,
+        "openai_api_key": settings.openai_api_key,
+        "runtime_data_dir": settings.runtime_data_dir,
+    }
+    settings.trading_mode = "paper"
+    settings.allow_live_trading = False
+    settings.alpaca_paper = True
+    settings.openai_api_key = None
+    settings.runtime_data_dir = str(tmp_path)
+    yield
+    for key, value in original.items():
+        setattr(settings, key, value)
 
 
 def test_confirmed_watchlist_defaults_are_loaded() -> None:
@@ -63,3 +86,28 @@ def test_missing_alpaca_credentials_reports_env_names() -> None:
 
     assert "INVESTMENT_APP_ALPACA_API_KEY" in error.missing_names
     assert "INVESTMENT_APP_ALPACA_SECRET_KEY" in error.missing_names
+
+
+def test_local_heuristic_score_is_bounded_and_explainable() -> None:
+    candidate = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="micro_breakout_v1",
+        symbol="SPY",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=105,
+        proposed_stop=103.42,
+        trigger_evidence=[
+            "Price moved above previous close.",
+            "Observed volume exceeded minimum.",
+            "Candidate created by deterministic strategy.",
+        ],
+        confidence_hint=0.74,
+    )
+
+    scored = TradeScorer().score(candidate)
+
+    assert scored.ai_score.model_name == "local-heuristic"
+    assert 0.55 <= scored.ai_score.score <= 0.82
+    assert "Local heuristic blended" in scored.ai_score.summary
+    assert any("Fallback score is capped" in concern for concern in scored.ai_score.concerns)

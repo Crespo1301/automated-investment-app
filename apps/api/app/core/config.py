@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     max_live_trades_per_day: int = 3
     max_daily_loss: float = 2.0
     allow_live_trading: bool = False
+    allow_outside_market_hours: bool = False
+    duplicate_order_lookback_minutes: int = 390
+    runtime_data_dir: str = ".runtime"
     alpaca_api_key: str | None = None
     alpaca_secret_key: str | None = None
     alpaca_paper: bool = True

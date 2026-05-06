@@ -71,6 +71,18 @@ npm run spec:list
 npm run spec:validate
 ```
 
+Useful live-operator commands:
+
+```bash
+cd apps/api
+source .venv/bin/activate
+python -m app.worker --check-broker
+python -m app.worker --reconcile-broker
+python -m app.worker --safety-status
+python -m app.worker --enable-kill-switch "reason"
+python -m app.worker --cancel-open-orders
+```
+
 ## Environment Notes
 
 - `apps/web` reads `INVESTMENT_WEB_API_BASE_URL`, defaulting to `http://127.0.0.1:8000`
@@ -78,6 +90,8 @@ npm run spec:validate
 - Alpaca verification or account funding does not imply permission to trade live from this repo
 - do not enable `INVESTMENT_APP_ALLOW_LIVE_TRADING=true` without explicit approval
 - use `python -m app.worker --check-alpaca` and `python -m app.worker --reconcile-alpaca` before any discussion of live execution
+- use `python -m app.worker --check-broker` and `python -m app.worker --reconcile-broker` for the active paper/live configuration
+- local runtime audit files live under `.runtime/` and must not be committed
 
 ## Security Notes
 

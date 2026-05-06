@@ -12,3 +12,4 @@ build
 
 .env.ai.local
 .mcp.json
+.runtime/
