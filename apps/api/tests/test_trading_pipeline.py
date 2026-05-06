@@ -19,6 +19,7 @@ from app.services.local_worker import (
 )
 from app.services.exit_monitor import evaluate_exit_signals
 from app.services.protection_plan import build_protection_plan
+from app.services.readiness import get_morning_readiness
 from app.services.strategy_engine import AggressiveStrategyEngine, MicroBreakoutStrategy
 from app.domain.trading import BrokerOrderReceipt, BrokerOrderSummary, BrokerPositionSummary
 
@@ -421,6 +422,49 @@ def test_autopilot_live_tick_waits_when_entry_execution_is_locked(monkeypatch) -
     assert state.last_action.startswith("entry_execution_locked")
 
 
+def test_autopilot_reports_below_minimum_buying_power(monkeypatch) -> None:
+    settings.trading_mode = "live"
+    settings.allow_live_trading = True
+    settings.autopilot_allow_entries = True
+    enable_autopilot("test arm")
+
+    class FakeClock:
+        is_open = True
+        next_open = None
+
+    class FakeAccount:
+        buying_power = 0.64
+        portfolio_value = 10
+        account_mode = "live"
+
+    class FakeBroker:
+        def get_market_clock(self):
+            return FakeClock()
+
+        def get_reconciliation_snapshot(self, order_limit=50):
+            class Snapshot:
+                positions = []
+                orders = []
+
+            return Snapshot()
+
+        def get_account_status(self):
+            return FakeAccount()
+
+        def list_positions(self):
+            return []
+
+        def list_recent_orders(self, limit=50):
+            return []
+
+    monkeypatch.setattr("app.services.autopilot.get_active_alpaca_broker", lambda: FakeBroker())
+    monkeypatch.setattr("app.services.local_worker.get_active_alpaca_broker", lambda: FakeBroker())
+
+    state = run_autopilot_once()
+
+    assert state.last_action == "entry_skipped:buying_power_below_$1.00_minimum"
+
+
 def test_live_cycle_rejects_synthetic_demo_entry(monkeypatch) -> None:
     settings.trading_mode = "live"
     settings.allow_live_trading = True
@@ -673,6 +717,40 @@ def test_live_cycle_does_not_score_when_buying_power_is_below_fractional_minimum
     assert result.scored_candidate is None
     assert result.execution_intent is None
     assert result.broker_receipt is None
+
+
+def test_readiness_blocks_entries_below_minimum_buying_power(monkeypatch) -> None:
+    settings.trading_mode = "live"
+    settings.allow_live_trading = True
+    settings.autopilot_allow_entries = True
+    settings.autopilot_allow_exits = True
+    settings.alpaca_paper = False
+    enable_autopilot("test arm")
+
+    class FakeAccount:
+        buying_power = 0.64
+
+        def model_dump(self, mode="json"):
+            return {"buying_power": self.buying_power}
+
+    class FakeBroker:
+        def get_account_status(self):
+            return FakeAccount()
+
+        def get_market_clock(self):
+            from app.domain.trading import MarketClockStatus
+
+            return MarketClockStatus(is_open=True)
+
+        def has_market_data_access(self, symbols):
+            return True, None
+
+    monkeypatch.setattr("app.services.readiness.get_active_alpaca_broker", lambda: FakeBroker())
+
+    result = get_morning_readiness()
+
+    assert result["ready_for_autonomous_entries"] is False
+    assert any("below the $1.00 minimum" in blocker for blocker in result["blockers"])
 
 
 def test_exit_monitor_detects_stop_loss_signal() -> None:

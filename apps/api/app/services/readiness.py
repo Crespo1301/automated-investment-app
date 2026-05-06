@@ -16,7 +16,7 @@ def get_morning_readiness() -> dict[str, object]:
     safety = get_safety_state()
     autopilot = get_autopilot_state()
     limits = get_risk_limits()
-    blockers = _find_blockers(clock)
+    blockers = _find_blockers(clock, account.buying_power)
 
     return {
         "ready_for_watch_mode": not safety.kill_switch_enabled and autopilot.enabled,
@@ -35,7 +35,7 @@ def get_morning_readiness() -> dict[str, object]:
     }
 
 
-def _find_blockers(clock: MarketClockStatus) -> list[str]:
+def _find_blockers(clock: MarketClockStatus, buying_power: float) -> list[str]:
     blockers: list[str] = []
     safety = get_safety_state()
     autopilot = get_autopilot_state()
@@ -54,6 +54,10 @@ def _find_blockers(clock: MarketClockStatus) -> list[str]:
         blockers.append("Regular market is currently closed.")
     if not settings.autopilot_allow_entries:
         blockers.append("Autopilot entry execution is locked.")
+    if settings.autopilot_allow_entries and buying_power < settings.minimum_order_notional:
+        blockers.append(
+            f"Buying power ${buying_power:.2f} is below the ${settings.minimum_order_notional:.2f} minimum order guard."
+        )
     if not settings.autopilot_allow_exits:
         blockers.append("Autopilot exit execution is locked.")
     if settings.autopilot_allow_entries:
