@@ -110,7 +110,14 @@ const demoPipeline: PipelinePreview = {
   ],
 };
 
-const navItems = ["Overview", "Portfolio", "Strategies", "Risk", "Orders", "Settings"];
+const navItems = [
+  { label: "Overview", href: "#overview" },
+  { label: "Portfolio", href: "#portfolio" },
+  { label: "Strategies", href: "#strategies" },
+  { label: "Risk", href: "#risk" },
+  { label: "Orders", href: "#orders" },
+  { label: "Settings", href: "#settings" },
+];
 
 const apiBaseUrl = process.env.INVESTMENT_WEB_API_BASE_URL ?? "http://127.0.0.1:8000";
 
@@ -353,8 +360,8 @@ export default async function HomePage() {
         </div>
         <nav className="nav-list" aria-label="Main navigation">
           {navItems.map((item) => (
-            <a className={item === "Overview" ? "nav-item active" : "nav-item"} href="#" key={item}>
-              {item}
+            <a className={item.label === "Overview" ? "nav-item active" : "nav-item"} href={item.href} key={item.label}>
+              {item.label}
             </a>
           ))}
         </nav>
@@ -381,7 +388,7 @@ export default async function HomePage() {
           </div>
         </header>
 
-        <section className={account && !killSwitchEnabled ? "notice-row" : "notice-row warning-row"}>
+        <section id="overview" className={account && !killSwitchEnabled ? "notice-row page-anchor" : "notice-row warning-row page-anchor"}>
           <strong>
             {killSwitchEnabled
               ? "Kill switch is enabled."
@@ -398,7 +405,7 @@ export default async function HomePage() {
           </span>
         </section>
 
-        <section className="grid metrics">
+        <section className="grid metrics" aria-label="Account overview metrics">
           {dashboardMetrics.map((metric) => (
             <StatusCard
               key={metric.label}
@@ -413,7 +420,7 @@ export default async function HomePage() {
 
         <section className="content-grid">
           <div className="stack">
-            <article className="panel">
+            <article className="panel" id="settings">
               <div className="section-title">
                 <div>
                   <h2>Daily Usage</h2>
@@ -512,7 +519,7 @@ export default async function HomePage() {
               </div>
             </article>
 
-            <article className="panel">
+            <article className="panel" id="portfolio">
               <div className="section-title">
                 <div>
                   <h2>Portfolio posture</h2>
@@ -566,7 +573,7 @@ export default async function HomePage() {
               </div>
             </article>
 
-            <article className="panel">
+            <article className="panel" id="orders">
               <div className="section-title">
                 <div>
                   <h2>Recent broker orders</h2>
@@ -601,7 +608,7 @@ export default async function HomePage() {
               </div>
             </article>
 
-            <article className="panel">
+            <article className="panel" id="strategies">
               <div className="section-title">
                 <div>
                   <h2>{demoPipeline.pipeline_name}</h2>
@@ -629,7 +636,7 @@ export default async function HomePage() {
           </div>
 
           <div className="stack">
-            <article className="panel">
+            <article className="panel" id="risk">
               <div className="section-title">
                 <div>
                   <h2>Autopilot</h2>
