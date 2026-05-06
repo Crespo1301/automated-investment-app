@@ -156,6 +156,8 @@ a {
 
 .environment-badge,
 .primary-action,
+.secondary-action,
+.danger-action,
 .state-pill {
   border: 1px solid var(--line-strong);
   background: var(--panel);
@@ -169,6 +171,22 @@ a {
   border-color: var(--accent);
   color: #ffffff;
   cursor: pointer;
+}
+
+.secondary-action,
+.danger-action {
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.secondary-action:hover {
+  border-color: var(--text);
+}
+
+.danger-action {
+  background: #fff5f3;
+  border-color: #f4b8b1;
+  color: var(--danger);
 }
 
 .notice-row {
@@ -383,6 +401,45 @@ a {
   border-top: 0;
 }
 
+.daily-grid {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--line);
+}
+
+.daily-step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.daily-step:first-child {
+  border-top: 0;
+}
+
+.trading-action {
+  background: #fbfcfa;
+}
+
+.inline-form {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.inline-form input {
+  width: 160px;
+  min-height: 37px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--text);
+  padding: 8px 10px;
+}
+
 .step-number {
   display: grid;
   width: 26px;
@@ -432,5 +489,26 @@ a {
 
   .order-row {
     grid-template-columns: 1fr;
+  }
+
+  .daily-step {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .daily-step form,
+  .daily-step .state-pill {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .inline-form {
+    align-items: stretch;
+    flex-direction: column;
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .inline-form input {
+    width: 100%;
   }
 }

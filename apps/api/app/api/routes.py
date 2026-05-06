@@ -12,6 +12,7 @@ from app.domain.trading import BrokerAccountStatus, PipelineRunResult, RiskLimit
 from app.domain.trading import AuditSummary, BrokerReconciliationSnapshot, SafetyState
 from app.services.broker_adapter import get_active_alpaca_broker, get_alpaca_paper_broker
 from app.services.audit_store import (
+    record_cancel_result,
     record_reconciliation_snapshot,
     set_kill_switch,
     summarize_audit,
@@ -100,6 +101,17 @@ def trading_local_cycle() -> PipelineRunResult:
     return run_single_cycle()
 
 
+@router.post(
+    "/api/trading/run-cycle",
+    response_model=PipelineRunResult,
+    tags=["trading"],
+)
+def trading_run_cycle() -> PipelineRunResult:
+    """Run one configured trading cycle through the active risk and broker path."""
+
+    return run_single_cycle()
+
+
 @router.get(
     "/api/broker/alpaca/account",
     response_model=BrokerAccountStatus,
@@ -144,6 +156,22 @@ def active_broker_reconciliation() -> BrokerReconciliationSnapshot:
     snapshot = get_active_alpaca_broker().get_reconciliation_snapshot()
     record_reconciliation_snapshot(snapshot)
     return snapshot
+
+
+@router.post(
+    "/api/broker/cancel-open-orders",
+    tags=["broker"],
+)
+def cancel_open_orders() -> dict[str, object]:
+    """Cancel all currently open orders on the active broker configuration."""
+
+    result = {
+        "broker": "alpaca",
+        "mode": "active-config",
+        "canceled_orders": get_active_alpaca_broker().cancel_open_orders(),
+    }
+    record_cancel_result(result)
+    return result
 
 
 @router.get(

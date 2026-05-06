@@ -1,4 +1,5 @@
 import { StatusCard } from "@/components/status-card";
+import { revalidatePath } from "next/cache";
 import type {
   AuditSummary,
   BrokerReconciliationSnapshot,
@@ -110,6 +111,52 @@ const navItems = ["Overview", "Portfolio", "Strategies", "Risk", "Orders", "Sett
 
 const apiBaseUrl = process.env.INVESTMENT_WEB_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+async function postApi(path: string) {
+  "use server";
+
+  await fetch(`${apiBaseUrl}${path}`, {
+    cache: "no-store",
+    method: "POST",
+  });
+  revalidatePath("/");
+}
+
+async function refreshDashboard() {
+  "use server";
+
+  revalidatePath("/");
+}
+
+async function cancelOpenOrders() {
+  "use server";
+
+  await postApi("/api/broker/cancel-open-orders");
+}
+
+async function enableKillSwitch(formData: FormData) {
+  "use server";
+
+  const reason = String(formData.get("reason") || "Paused from dashboard.");
+  await postApi(`/api/safety/kill-switch/enable?reason=${encodeURIComponent(reason)}`);
+}
+
+async function disableKillSwitch() {
+  "use server";
+
+  await postApi("/api/safety/kill-switch/disable");
+}
+
+async function runTradingCycle(formData: FormData) {
+  "use server";
+
+  const confirmation = String(formData.get("confirmation") || "").trim();
+  if (confirmation !== "RUN LIVE") {
+    return;
+  }
+
+  await postApi("/api/trading/run-cycle");
+}
+
 async function getReconciliation(): Promise<BrokerReconciliationSnapshot | null> {
   try {
     const response = await fetch(`${apiBaseUrl}/api/broker/reconciliation`, {
@@ -165,6 +212,11 @@ export default async function HomePage() {
   const positions = reconciliation?.positions ?? [];
   const killSwitchEnabled = safety?.safety_state.kill_switch_enabled ?? false;
   const marketOpen = safety?.market_clock?.is_open ?? false;
+  const openOrders = orders.filter((order) =>
+    ["ACCEPTED", "NEW", "PENDING_NEW", "PARTIALLY_FILLED", "PENDING_CANCEL"].includes(
+      cleanEnum(order.status).toUpperCase(),
+    ),
+  );
   const dashboardMetrics = account
     ? [
         {
@@ -260,6 +312,85 @@ export default async function HomePage() {
 
         <section className="content-grid">
           <div className="stack">
+            <article className="panel">
+              <div className="section-title">
+                <div>
+                  <h2>Daily Usage</h2>
+                  <p>One place for the routine that used to live in terminal commands.</p>
+                </div>
+              </div>
+
+              <div className="daily-grid">
+                <div className="daily-step">
+                  <span className="step-number">1</span>
+                  <div>
+                    <strong>Refresh Broker State</strong>
+                    <p className="thesis">Reconcile account, orders, positions, safety, and market clock.</p>
+                  </div>
+                  <form action={refreshDashboard}>
+                    <button className="secondary-action" type="submit">Refresh</button>
+                  </form>
+                </div>
+
+                <div className="daily-step">
+                  <span className="step-number">2</span>
+                  <div>
+                    <strong>Review Active Risk</strong>
+                    <p className="thesis">
+                      {openOrders.length} open orders, {positions.length} positions, kill switch{" "}
+                      {killSwitchEnabled ? "enabled" : "clear"}.
+                    </p>
+                  </div>
+                  <span className={openOrders.length ? "state-pill state-warning" : "state-pill state-healthy"}>
+                    {openOrders.length ? "review" : "clear"}
+                  </span>
+                </div>
+
+                <div className="daily-step">
+                  <span className="step-number">3</span>
+                  <div>
+                    <strong>Pause Or Resume</strong>
+                    <p className="thesis">Use the kill switch before stepping away or changing settings.</p>
+                  </div>
+                  {killSwitchEnabled ? (
+                    <form action={disableKillSwitch}>
+                      <button className="secondary-action" type="submit">Disable</button>
+                    </form>
+                  ) : (
+                    <form action={enableKillSwitch} className="inline-form">
+                      <input name="reason" placeholder="Pause reason" />
+                      <button className="danger-action" type="submit">Enable</button>
+                    </form>
+                  )}
+                </div>
+
+                <div className="daily-step">
+                  <span className="step-number">4</span>
+                  <div>
+                    <strong>Cancel Queued Orders</strong>
+                    <p className="thesis">Cancel all open broker orders, then refresh reconciliation.</p>
+                  </div>
+                  <form action={cancelOpenOrders}>
+                    <button className="danger-action" type="submit">Cancel All</button>
+                  </form>
+                </div>
+
+                <div className="daily-step trading-action">
+                  <span className="step-number">5</span>
+                  <div>
+                    <strong>Run One Cycle</strong>
+                    <p className="thesis">
+                      Type RUN LIVE to submit one configured strategy cycle through the current safeguards.
+                    </p>
+                  </div>
+                  <form action={runTradingCycle} className="inline-form">
+                    <input name="confirmation" placeholder="RUN LIVE" />
+                    <button className="primary-action" type="submit">Run</button>
+                  </form>
+                </div>
+              </div>
+            </article>
+
             <article className="panel">
               <div className="section-title">
                 <div>
