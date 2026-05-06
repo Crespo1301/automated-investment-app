@@ -44,6 +44,7 @@ def isolate_runtime_settings(tmp_path):
         "ai_min_score": settings.ai_min_score,
         "allow_demo_live_entries": settings.allow_demo_live_entries,
         "alpaca_paper": settings.alpaca_paper,
+        "duplicate_order_lookback_minutes": settings.duplicate_order_lookback_minutes,
         "openai_api_key": settings.openai_api_key,
         "runtime_data_dir": settings.runtime_data_dir,
     }
@@ -66,6 +67,7 @@ def isolate_runtime_settings(tmp_path):
     settings.ai_min_score = 0.55
     settings.allow_demo_live_entries = False
     settings.alpaca_paper = True
+    settings.duplicate_order_lookback_minutes = 390
     settings.openai_api_key = None
     settings.runtime_data_dir = str(tmp_path)
     yield
@@ -548,6 +550,126 @@ def test_live_cycle_uses_real_market_data_events(monkeypatch) -> None:
     assert result.execution_intent.symbol == "QQQ"
     assert result.execution_intent.approved_notional == 2.5
     assert result.broker_receipt is not None
+
+
+def test_live_cycle_skips_existing_position_symbol(monkeypatch) -> None:
+    settings.trading_mode = "live"
+    settings.allow_live_trading = True
+    settings.allow_demo_live_entries = False
+
+    class FakeAccount:
+        buying_power = 10
+        portfolio_value = 10
+        account_mode = "live"
+
+    class FakeClock:
+        is_open = True
+        next_open = None
+
+    class FakeBroker:
+        def get_account_status(self):
+            return FakeAccount()
+
+        def list_positions(self):
+            return [
+                BrokerPositionSummary(
+                    symbol="NVDA",
+                    quantity=0.01,
+                    market_value=2,
+                    cost_basis=2,
+                    unrealized_pl=0,
+                    unrealized_pl_percent=0,
+                    current_price=200,
+                )
+            ]
+
+        def list_recent_orders(self, limit=50):
+            return []
+
+        def get_market_clock(self):
+            return FakeClock()
+
+        def has_open_duplicate_order(self, **kwargs):
+            return None
+
+        def list_watchlist_market_events(self, symbols):
+            return [
+                MarketEvent(
+                    source="alpaca-snapshot",
+                    symbol="NVDA",
+                    event_kind="bar",
+                    price=206,
+                    previous_close=196,
+                    volume=50_000,
+                    opening_range_high=201,
+                    recent_volume=80_000,
+                    average_recent_volume=7_000,
+                ),
+                MarketEvent(
+                    source="alpaca-snapshot",
+                    symbol="AMZN",
+                    event_kind="bar",
+                    price=230,
+                    previous_close=226,
+                    volume=50_000,
+                    opening_range_high=228,
+                    recent_volume=60_000,
+                    average_recent_volume=6_000,
+                ),
+            ]
+
+        def submit_order(self, intent):
+            return BrokerOrderReceipt(
+                broker_order_id="broker_order_1",
+                intent_id=intent.intent_id,
+                status="accepted",
+                symbol=intent.symbol,
+                side=intent.side,
+                submitted_notional=intent.approved_notional,
+                raw_message="submitted",
+            )
+
+    monkeypatch.setattr("app.services.local_worker.get_active_alpaca_broker", lambda: FakeBroker())
+
+    result = run_single_cycle()
+
+    assert result.candidate is not None
+    assert result.candidate.symbol == "AMZN"
+    assert result.execution_intent is not None
+    assert result.execution_intent.symbol == "AMZN"
+
+
+def test_live_cycle_does_not_score_when_buying_power_is_below_fractional_minimum(monkeypatch) -> None:
+    settings.trading_mode = "live"
+    settings.allow_live_trading = True
+
+    class FakeAccount:
+        buying_power = 0.64
+        portfolio_value = 10
+        account_mode = "live"
+
+    class FakeBroker:
+        def get_account_status(self):
+            return FakeAccount()
+
+        def list_positions(self):
+            return []
+
+        def list_recent_orders(self, limit=50):
+            return []
+
+        def list_watchlist_market_events(self, symbols):
+            raise AssertionError("market events should not be fetched below $1 buying power")
+
+    monkeypatch.setattr("app.services.local_worker.get_active_alpaca_broker", lambda: FakeBroker())
+
+    result = run_single_cycle()
+
+    assert result.event.source == "portfolio-guard"
+    assert result.candidate is None
+    assert result.scored_candidate is None
+    assert result.execution_intent is None
+    assert result.broker_receipt is None
 
 
 def test_exit_monitor_detects_stop_loss_signal() -> None:

@@ -1,6 +1,6 @@
 """Local worker cycle for developing the autonomous trading loop."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.core.config import configured_symbols, settings
 from app.domain.trading import (
@@ -68,7 +68,8 @@ def get_portfolio_state_from_broker(broker: AlpacaBroker) -> PortfolioState:
         if submitted_at.astimezone(UTC).date() != today:
             continue
 
-        if order.status.lower() in {
+        status = order.status.split(".")[-1].lower()
+        if status in {
             "new",
             "accepted",
             "pending_new",
@@ -113,6 +114,17 @@ def run_single_cycle(
         buying_power=portfolio_state.buying_power,
         target_position_percent=limits.target_position_percent,
     )
+    if target_notional < 1:
+        return PipelineRunResult(
+            event=_portfolio_minimum_event(),
+            candidate=None,
+            scored_candidate=None,
+            risk_decision=None,
+            execution_intent=None,
+            broker_receipt=None,
+        )
+
+    blocked_entry_symbols = _blocked_entry_symbols(broker)
     strategy = AggressiveStrategyEngine(
         allowed_symbols=limits.allowed_symbols,
         proposed_notional=target_notional,
@@ -122,7 +134,11 @@ def run_single_cycle(
     )
 
     events = _get_cycle_events(event=event, broker=broker, limits=limits)
-    selected_event, candidate = _select_best_candidate(events, strategy)
+    selected_event, candidate = _select_best_candidate(
+        events,
+        strategy,
+        blocked_symbols=blocked_entry_symbols,
+    )
     if candidate is None:
         return PipelineRunResult(
             event=selected_event,
@@ -276,9 +292,11 @@ def _get_cycle_events(
 def _select_best_candidate(
     events: list[MarketEvent],
     strategy: AggressiveStrategyEngine,
+    blocked_symbols: set[str] | None = None,
 ) -> tuple[MarketEvent, TradeCandidate | None]:
     """Choose the strongest candidate from the current cycle's events."""
 
+    blocked_symbols = blocked_symbols or set()
     if not events:
         fallback_event = MarketEvent(
             source="local-demo",
@@ -294,6 +312,8 @@ def _select_best_candidate(
     selected_candidate = None
     for market_event in events:
         for candidate in strategy.evaluate_all(market_event):
+            if candidate.symbol.upper() in blocked_symbols:
+                continue
             if (
                 selected_candidate is None
                 or candidate.confidence_hint > selected_candidate.confidence_hint
@@ -302,6 +322,55 @@ def _select_best_candidate(
                 selected_candidate = candidate
 
     return selected_event, selected_candidate
+
+
+def _blocked_entry_symbols(broker: AlpacaBroker | None) -> set[str]:
+    """Return symbols that should not receive another autonomous buy right now."""
+
+    if broker is None or settings.trading_mode != "live":
+        return set()
+
+    blocked = {position.symbol.upper() for position in broker.list_positions()}
+    cutoff = datetime.now(UTC) - _duplicate_lookback_delta()
+    for order in broker.list_recent_orders(limit=50):
+        submitted_at = order.submitted_at
+        if submitted_at is not None and submitted_at.astimezone(UTC) < cutoff:
+            continue
+
+        side = order.side.split(".")[-1].lower()
+        status = order.status.split(".")[-1].lower()
+        if side == "buy" and status in _entry_blocking_order_statuses():
+            blocked.add(order.symbol.upper())
+
+    return blocked
+
+
+def _duplicate_lookback_delta():
+    return timedelta(minutes=max(1, settings.duplicate_order_lookback_minutes))
+
+
+def _entry_blocking_order_statuses() -> set[str]:
+    return {
+        "accepted",
+        "new",
+        "pending_new",
+        "partially_filled",
+        "pending_replace",
+        "pending_cancel",
+        "filled",
+    }
+
+
+def _portfolio_minimum_event() -> MarketEvent:
+    return MarketEvent(
+        source="portfolio-guard",
+        symbol="CASH",
+        event_kind="bar",
+        price=1,
+        previous_close=1,
+        volume=0,
+        session_state="regular",
+    )
 
 
 def _calculate_target_notional(
