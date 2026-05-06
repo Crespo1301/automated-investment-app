@@ -4,6 +4,8 @@ from app.core.config import configured_symbols
 from app.core.config import settings
 from app.domain.trading import TradeCandidate
 from app.services.ai_scorer import TradeScorer
+from app.services.audit_store import get_autopilot_state, get_safety_state
+from app.services.autopilot import enable_autopilot, run_autopilot_once
 from app.services.broker_adapter import (
     LocalPaperBroker,
     MissingBrokerCredentialsError,
@@ -130,3 +132,26 @@ def test_queue_for_open_requires_live_permission() -> None:
     assert result.execution_intent is None
     assert result.broker_receipt is None
     assert any("Queue-for-open requires live trading mode" in reason for reason in result.risk_decision.reasons)
+
+
+def test_autopilot_defaults_to_disabled_runtime_state() -> None:
+    state = get_autopilot_state()
+
+    assert state.enabled is False
+    assert state.interval_seconds == settings.autopilot_interval_seconds
+    assert state.market_open_only is True
+
+
+def test_autopilot_tick_requires_live_permission_and_fails_closed() -> None:
+    settings.trading_mode = "paper"
+    settings.allow_live_trading = False
+    enable_autopilot("test arm")
+
+    state = run_autopilot_once()
+    safety = get_safety_state()
+
+    assert state.enabled is False
+    assert state.last_action == "disabled_by_config_error"
+    assert safety.kill_switch_enabled is True
+    assert safety.reason is not None
+    assert "requires live trading mode" in safety.reason

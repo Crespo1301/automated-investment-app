@@ -56,6 +56,14 @@ cd /home/cresp3/automated-investment-app
 npm run dev:web
 ```
 
+In a third terminal, start supervised autopilot only when you are ready for
+scheduled checks:
+
+```bash
+cd /home/cresp3/automated-investment-app
+npm run dev:autopilot
+```
+
 Use `http://localhost:3000` as the main operating surface:
 
 1. Refresh broker state.
@@ -66,6 +74,15 @@ Use `http://localhost:3000` as the main operating surface:
 6. Type `RUN LIVE` only when intentionally running one live guarded cycle.
 
 If FastAPI is offline, the dashboard disables live actions and shows a backend warning.
+
+Autopilot rules:
+
+- dashboard `Enable` only arms the state after `ENABLE AUTO`
+- `npm run dev:autopilot` must be running for scheduled checks
+- the loop waits outside regular market hours by default
+- the loop uses the same risk engine, duplicate-order checks, market-hours guard, and kill switch
+- the loop enables the kill switch and disables itself on runtime errors
+- use `npm run autopilot:status` and `npm run autopilot:once` for diagnostics
 
 `Queue For Open` is not an extended-hours trading feature. It keeps the normal
 regular-session market order path and uses the broker queue while regular market
@@ -160,6 +177,17 @@ Queue one guarded regular-session order while the regular market is closed:
 cd apps/api
 source .venv/bin/activate
 python -m app.worker --queue-for-open
+```
+
+Supervised autopilot diagnostics:
+
+```bash
+cd apps/api
+source .venv/bin/activate
+python -m app.worker --autopilot-status
+python -m app.worker --enable-autopilot "Testing supervised checks"
+python -m app.worker --autopilot-once
+python -m app.worker --autopilot-loop
 ```
 
 The local audit trail is written under `.runtime/` and should remain uncommitted.

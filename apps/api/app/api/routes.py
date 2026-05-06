@@ -8,15 +8,17 @@ from app.domain.models import (
     PipelinePreview,
     SystemProfile,
 )
-from app.domain.trading import BrokerAccountStatus, PipelineRunResult, RiskLimits
+from app.domain.trading import AutopilotState, BrokerAccountStatus, PipelineRunResult, RiskLimits
 from app.domain.trading import AuditSummary, BrokerReconciliationSnapshot, SafetyState
 from app.services.broker_adapter import get_active_alpaca_broker, get_alpaca_paper_broker
 from app.services.audit_store import (
+    get_autopilot_state,
     record_cancel_result,
     record_reconciliation_snapshot,
     set_kill_switch,
     summarize_audit,
 )
+from app.services.autopilot import disable_autopilot, enable_autopilot, run_autopilot_once
 from app.services.demo_data import (
     get_dashboard_snapshot,
     get_handoff_catalog,
@@ -125,6 +127,50 @@ def trading_queue_for_open() -> PipelineRunResult:
     """Queue one guarded regular-session order while the market is closed."""
 
     return run_queue_for_open_cycle()
+
+
+@router.get(
+    "/api/autopilot/status",
+    response_model=AutopilotState,
+    tags=["autopilot"],
+)
+def autopilot_status() -> AutopilotState:
+    """Return the local supervised automation state."""
+
+    return get_autopilot_state()
+
+
+@router.post(
+    "/api/autopilot/enable",
+    response_model=AutopilotState,
+    tags=["autopilot"],
+)
+def autopilot_enable(reason: str = "Enabled from dashboard.") -> AutopilotState:
+    """Arm autopilot. A separate local loop process must still be running."""
+
+    return enable_autopilot(reason=reason)
+
+
+@router.post(
+    "/api/autopilot/disable",
+    response_model=AutopilotState,
+    tags=["autopilot"],
+)
+def autopilot_disable(reason: str = "Disabled from dashboard.") -> AutopilotState:
+    """Disarm autopilot."""
+
+    return disable_autopilot(reason=reason)
+
+
+@router.post(
+    "/api/autopilot/tick",
+    response_model=AutopilotState,
+    tags=["autopilot"],
+)
+def autopilot_tick() -> AutopilotState:
+    """Run one supervised autopilot check."""
+
+    return run_autopilot_once()
 
 
 @router.get(

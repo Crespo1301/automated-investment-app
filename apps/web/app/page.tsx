@@ -177,6 +177,35 @@ async function queueForOpen(formData: FormData) {
   await postApi("/api/trading/queue-for-open");
 }
 
+async function enableAutopilot(formData: FormData) {
+  "use server";
+
+  const confirmation = String(formData.get("confirmation") || "").trim();
+  if (confirmation !== "ENABLE AUTO") {
+    return;
+  }
+
+  const reason = String(formData.get("reason") || "Armed from dashboard.");
+  await postApi(`/api/autopilot/enable?reason=${encodeURIComponent(reason)}`);
+}
+
+async function disableAutopilot() {
+  "use server";
+
+  await postApi("/api/autopilot/disable");
+}
+
+async function runAutopilotTick(formData: FormData) {
+  "use server";
+
+  const confirmation = String(formData.get("confirmation") || "").trim();
+  if (confirmation !== "AUTO TICK") {
+    return;
+  }
+
+  await postApi("/api/autopilot/tick");
+}
+
 async function getReconciliation(): Promise<BrokerReconciliationSnapshot | null> {
   try {
     const response = await fetch(`${apiBaseUrl}/api/broker/reconciliation`, {
@@ -231,6 +260,7 @@ export default async function HomePage() {
   const orders = reconciliation?.orders ?? [];
   const positions = reconciliation?.positions ?? [];
   const killSwitchEnabled = safety?.safety_state.kill_switch_enabled ?? false;
+  const autopilot = safety?.autopilot_state;
   const marketOpen = safety?.market_clock?.is_open ?? false;
   const openOrders = orders.filter((order) =>
     ["ACCEPTED", "NEW", "PENDING_NEW", "PARTIALLY_FILLED", "PENDING_CANCEL"].includes(
@@ -542,6 +572,64 @@ export default async function HomePage() {
           </div>
 
           <div className="stack">
+            <article className="panel">
+              <div className="section-title">
+                <div>
+                  <h2>Autopilot</h2>
+                  <p>Supervised loop state for hands-off checks.</p>
+                </div>
+                <span className={autopilot?.enabled ? "state-pill state-warning" : "state-pill state-blocked"}>
+                  {autopilot?.enabled ? "armed" : "off"}
+                </span>
+              </div>
+
+              <div className="autopilot-grid">
+                <div className="autopilot-row">
+                  <span>Interval</span>
+                  <strong>{autopilot ? `${autopilot.interval_seconds}s` : "offline"}</strong>
+                </div>
+                <div className="autopilot-row">
+                  <span>Scope</span>
+                  <strong>{autopilot?.market_open_only ? "market open only" : "all sessions"}</strong>
+                </div>
+                <div className="autopilot-row">
+                  <span>Last heartbeat</span>
+                  <strong>{autopilot?.last_heartbeat_at ? new Date(autopilot.last_heartbeat_at).toLocaleTimeString() : "none"}</strong>
+                </div>
+                <div className="autopilot-row">
+                  <span>Last action</span>
+                  <strong>{autopilot?.last_action ?? "none"}</strong>
+                </div>
+              </div>
+
+              {autopilot?.last_error ? (
+                <div className="action-warning" role="status">{autopilot.last_error}</div>
+              ) : null}
+
+              <div className="autopilot-actions">
+                {autopilot?.enabled ? (
+                  <form action={disableAutopilot}>
+                    <button className="danger-action" disabled={!account} type="submit">Disable</button>
+                  </form>
+                ) : (
+                  <form action={enableAutopilot} className="inline-form">
+                    <input name="reason" placeholder="Arm reason" />
+                    <input name="confirmation" placeholder="ENABLE AUTO" />
+                    <button className="secondary-action" disabled={!account || killSwitchEnabled} type="submit">Enable</button>
+                  </form>
+                )}
+
+                <form action={runAutopilotTick} className="inline-form">
+                  <input name="confirmation" placeholder="AUTO TICK" />
+                  <button className="primary-action" disabled={!account || killSwitchEnabled} type="submit">Tick</button>
+                </form>
+              </div>
+
+              <p className="thesis">
+                The dashboard arms autopilot, but the separate worker loop must be running for scheduled checks.
+              </p>
+            </article>
+
             <article className="panel">
               <div className="section-title">
                 <div>

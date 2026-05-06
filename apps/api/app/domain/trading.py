@@ -110,6 +110,19 @@ class SafetyState(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class AutopilotState(BaseModel):
+    """Local supervised automation state."""
+
+    enabled: bool = False
+    reason: str | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_heartbeat_at: datetime | None = None
+    last_action: str | None = None
+    last_error: str | None = None
+    interval_seconds: int = 300
+    market_open_only: bool = True
+
+
 class RiskDecision(BaseModel):
     """Risk engine output for a scored trade candidate."""
 
@@ -211,6 +224,7 @@ class AuditSummary(BaseModel):
     latest_order_symbol: str | None = None
     latest_order_notional: float | None = None
     safety_state: SafetyState = Field(default_factory=SafetyState)
+    autopilot_state: AutopilotState = Field(default_factory=AutopilotState)
     market_clock: MarketClockStatus | None = None
     notes: list[str] = Field(default_factory=list)
 

@@ -10,10 +10,17 @@ from app.services.broker_adapter import (
     get_alpaca_paper_broker,
 )
 from app.services.audit_store import (
+    get_autopilot_state,
     record_cancel_result,
     record_reconciliation_snapshot,
     set_kill_switch,
     summarize_audit,
+)
+from app.services.autopilot import (
+    disable_autopilot,
+    enable_autopilot,
+    run_autopilot_loop,
+    run_autopilot_once,
 )
 from app.services.local_worker import run_queue_for_open_cycle, run_single_cycle
 
@@ -72,6 +79,39 @@ def main() -> None:
         action="store_true",
         help="Disable the local operator kill switch.",
     )
+    parser.add_argument(
+        "--autopilot-status",
+        action="store_true",
+        help="Show local supervised autopilot state.",
+    )
+    parser.add_argument(
+        "--enable-autopilot",
+        metavar="REASON",
+        help="Arm supervised autopilot state. Start --autopilot-loop separately.",
+    )
+    parser.add_argument(
+        "--disable-autopilot",
+        metavar="REASON",
+        nargs="?",
+        const="Operator disabled autopilot.",
+        help="Disarm supervised autopilot state.",
+    )
+    parser.add_argument(
+        "--autopilot-once",
+        action="store_true",
+        help="Run one supervised autopilot tick.",
+    )
+    parser.add_argument(
+        "--autopilot-loop",
+        action="store_true",
+        help="Run the supervised autopilot loop until disabled or interrupted.",
+    )
+    parser.add_argument(
+        "--autopilot-max-ticks",
+        type=int,
+        default=None,
+        help="Optional testing limit for --autopilot-loop.",
+    )
     args = parser.parse_args()
 
     try:
@@ -86,6 +126,11 @@ def main() -> None:
             args.safety_status,
             bool(args.enable_kill_switch),
             args.disable_kill_switch,
+            args.autopilot_status,
+            bool(args.enable_autopilot),
+            bool(args.disable_autopilot),
+            args.autopilot_once,
+            args.autopilot_loop,
         ]
         if sum(bool(action) for action in selected_actions) > 1:
             parser.error("Choose only one worker action at a time.")
@@ -118,6 +163,17 @@ def main() -> None:
             result = set_kill_switch(True, reason=args.enable_kill_switch)
         elif args.disable_kill_switch:
             result = set_kill_switch(False, reason="Operator disabled the kill switch.")
+        elif args.autopilot_status:
+            result = get_autopilot_state()
+        elif args.enable_autopilot:
+            result = enable_autopilot(reason=args.enable_autopilot)
+        elif args.disable_autopilot:
+            result = disable_autopilot(reason=args.disable_autopilot)
+        elif args.autopilot_once:
+            result = run_autopilot_once()
+        elif args.autopilot_loop:
+            run_autopilot_loop(max_ticks=args.autopilot_max_ticks)
+            result = get_autopilot_state()
         else:
             result = run_single_cycle()
     except MissingBrokerCredentialsError as exc:

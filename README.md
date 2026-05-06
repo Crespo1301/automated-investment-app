@@ -57,6 +57,13 @@ cd /home/cresp3/automated-investment-app
 npm run dev:web
 ```
 
+Optional supervised autopilot loop:
+
+```bash
+cd /home/cresp3/automated-investment-app
+npm run dev:autopilot
+```
+
 Quick API check:
 
 ```bash
@@ -78,6 +85,14 @@ Daily operator flow:
 The dashboard is an operator console, not a set-and-forget trading bot. Keep early
 live usage attended and tiny while the app is still building persistent history,
 review tools, and safer automation.
+
+Autopilot is now a supervised local loop:
+
+- Dashboard **Enable** only arms the state after you type `ENABLE AUTO`.
+- `npm run dev:autopilot` must be running for scheduled checks.
+- The loop waits outside regular market hours by default.
+- The loop disables itself and enables the kill switch if a runtime error occurs.
+- Use `npm run autopilot:status` and `npm run autopilot:once` for diagnostics.
 
 `Queue For Open` does not turn on extended-hours trading. It submits the same
 regular-session day market order path through the existing risk gate while the
@@ -131,6 +146,10 @@ python -m app.worker --safety-status
 python -m app.worker --enable-kill-switch "reason"
 python -m app.worker --cancel-open-orders
 python -m app.worker --queue-for-open
+python -m app.worker --autopilot-status
+python -m app.worker --enable-autopilot "reason"
+python -m app.worker --autopilot-once
+python -m app.worker --autopilot-loop
 ```
 
 ## Environment Notes

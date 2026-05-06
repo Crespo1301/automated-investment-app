@@ -96,6 +96,17 @@ export type SafetyState = {
   updated_at: string;
 };
 
+export type AutopilotState = {
+  enabled: boolean;
+  reason?: string | null;
+  updated_at: string;
+  last_heartbeat_at?: string | null;
+  last_action?: string | null;
+  last_error?: string | null;
+  interval_seconds: number;
+  market_open_only: boolean;
+};
+
 export type AuditSummary = {
   pipeline_runs: number;
   reconciliation_snapshots: number;
@@ -105,6 +116,7 @@ export type AuditSummary = {
   latest_order_symbol?: string | null;
   latest_order_notional?: number | null;
   safety_state: SafetyState;
+  autopilot_state: AutopilotState;
   market_clock?: MarketClockStatus | null;
   notes: string[];
 };
