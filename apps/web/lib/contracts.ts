@@ -159,6 +159,33 @@ export type PerformanceHistory = {
   notes: string[];
 };
 
+export type ProviderUsageSummary = {
+  provider: string;
+  count: number;
+};
+
+export type StrategyUsageSummary = {
+  strategy_id: string;
+  candidates: number;
+  approved: number;
+  submitted: number;
+};
+
+export type DailyTradeRecap = {
+  date: string;
+  starting_portfolio_value?: number | null;
+  ending_portfolio_value?: number | null;
+  portfolio_delta?: number | null;
+  pipeline_runs: number;
+  candidate_count: number;
+  approved_count: number;
+  rejected_count: number;
+  submitted_orders: number;
+  provider_usage: ProviderUsageSummary[];
+  strategy_usage: StrategyUsageSummary[];
+  notes: string[];
+};
+
 export type AuditSummary = {
   pipeline_runs: number;
   reconciliation_snapshots: number;

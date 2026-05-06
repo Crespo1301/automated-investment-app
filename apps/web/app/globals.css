@@ -265,6 +265,10 @@ a {
   margin-top: 14px;
 }
 
+.recap-grid {
+  margin-top: 14px;
+}
+
 .performance-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -287,6 +291,59 @@ a {
 
 .performance-metrics strong {
   font-size: 1.1rem;
+}
+
+.recap-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.recap-metrics div {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: #fbfcfa;
+}
+
+.recap-metrics span,
+.compact-row span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.recap-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.recap-columns h3 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.compact-list {
+  display: grid;
+  border: 1px solid var(--line);
+}
+
+.compact-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.compact-row:first-child {
+  border-top: 0;
+}
+
+.compact-row span {
+  overflow-wrap: anywhere;
 }
 
 .chart-frame {
@@ -614,6 +671,11 @@ a {
   }
 
   .performance-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .recap-metrics,
+  .recap-columns {
     grid-template-columns: 1fr;
   }
 

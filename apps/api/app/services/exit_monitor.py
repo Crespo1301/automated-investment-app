@@ -27,6 +27,7 @@ def evaluate_exit_signals(
 
         average_entry_price = position.cost_basis / position.quantity
         stop_price = average_entry_price * (1 - settings.autopilot_stop_loss_percent / 100)
+        small_win_price = average_entry_price * (1 + settings.autopilot_small_win_percent / 100)
         take_profit_price = average_entry_price * (1 + settings.autopilot_take_profit_percent / 100)
 
         if position.current_price <= stop_price:
@@ -50,6 +51,19 @@ def evaluate_exit_signals(
                     current_price=position.current_price,
                     average_entry_price=average_entry_price,
                     trigger_price=round(take_profit_price, 2),
+                    quantity=position.quantity,
+                    market_value=position.market_value,
+                    execution_allowed=execution_allowed,
+                )
+            )
+        elif position.current_price >= small_win_price:
+            signals.append(
+                ExitSignal(
+                    symbol=position.symbol,
+                    reason="small_win",
+                    current_price=position.current_price,
+                    average_entry_price=average_entry_price,
+                    trigger_price=round(small_win_price, 2),
                     quantity=position.quantity,
                     market_value=position.market_value,
                     execution_allowed=execution_allowed,

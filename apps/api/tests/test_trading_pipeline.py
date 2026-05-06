@@ -4,7 +4,7 @@ from app.core.config import configured_symbols
 from app.core.config import settings
 from app.domain.trading import AutopilotState, MarketEvent, ScoredTradeCandidate, TradeCandidate
 from app.services.ai_scorer import TradeScorer
-from app.services.audit_store import get_autopilot_state, get_safety_state
+from app.services.audit_store import get_autopilot_state, get_daily_trade_recap, get_safety_state
 from app.services.autopilot import enable_autopilot, run_autopilot_once
 from app.services.broker_adapter import (
     LocalPaperBroker,
@@ -18,7 +18,7 @@ from app.services.local_worker import (
 )
 from app.services.exit_monitor import evaluate_exit_signals
 from app.services.protection_plan import build_protection_plan
-from app.services.strategy_engine import MicroBreakoutStrategy
+from app.services.strategy_engine import AggressiveStrategyEngine, MicroBreakoutStrategy
 from app.domain.trading import BrokerOrderReceipt, BrokerOrderSummary, BrokerPositionSummary
 
 
@@ -35,8 +35,13 @@ def isolate_runtime_settings(tmp_path):
         "autopilot_allow_exits": settings.autopilot_allow_exits,
         "autopilot_interval_seconds": settings.autopilot_interval_seconds,
         "autopilot_market_open_only": settings.autopilot_market_open_only,
+        "autopilot_small_win_percent": settings.autopilot_small_win_percent,
         "autopilot_stop_loss_percent": settings.autopilot_stop_loss_percent,
         "autopilot_take_profit_percent": settings.autopilot_take_profit_percent,
+        "strategy_breakout_threshold": settings.strategy_breakout_threshold,
+        "strategy_min_volume": settings.strategy_min_volume,
+        "strategy_stop_loss_percent": settings.strategy_stop_loss_percent,
+        "ai_min_score": settings.ai_min_score,
         "allow_demo_live_entries": settings.allow_demo_live_entries,
         "alpaca_paper": settings.alpaca_paper,
         "openai_api_key": settings.openai_api_key,
@@ -52,8 +57,13 @@ def isolate_runtime_settings(tmp_path):
     settings.autopilot_allow_exits = False
     settings.autopilot_interval_seconds = 30
     settings.autopilot_market_open_only = True
+    settings.autopilot_small_win_percent = 1.5
     settings.autopilot_stop_loss_percent = 2
     settings.autopilot_take_profit_percent = 3
+    settings.strategy_breakout_threshold = 0.0025
+    settings.strategy_min_volume = 25_000
+    settings.strategy_stop_loss_percent = 0.025
+    settings.ai_min_score = 0.55
     settings.allow_demo_live_entries = False
     settings.alpaca_paper = True
     settings.openai_api_key = None
@@ -111,6 +121,67 @@ def test_aggressive_strategy_uses_range_and_volume_context() -> None:
     assert any("prior session" in item for item in candidate.trigger_evidence)
 
 
+def test_aggressive_strategy_detects_opening_range_breakout() -> None:
+    strategy = MicroBreakoutStrategy(
+        allowed_symbols=["SPY"],
+        proposed_notional=2.5,
+        breakout_threshold=0.0025,
+        min_volume=25_000,
+        stop_loss_percent=0.025,
+    )
+
+    engine = AggressiveStrategyEngine(
+        allowed_symbols=["SPY"],
+        proposed_notional=2.5,
+        breakout_threshold=0.0025,
+        min_volume=25_000,
+        stop_loss_percent=0.025,
+    )
+    event = MarketEvent(
+        source="test",
+        symbol="SPY",
+        event_kind="bar",
+        price=101,
+        previous_close=100,
+        volume=50_000,
+        opening_range_high=100.5,
+        opening_range_low=99.5,
+        recent_volume=700_000,
+        average_recent_volume=50_000,
+    )
+
+    candidates = engine.evaluate_all(event)
+
+    assert strategy.evaluate(event) is not None
+    assert any(candidate.strategy_id == "opening_range_breakout_v1" for candidate in candidates)
+
+
+def test_aggressive_strategy_detects_vwap_reclaim() -> None:
+    engine = AggressiveStrategyEngine(
+        allowed_symbols=["QQQ"],
+        proposed_notional=2.5,
+        breakout_threshold=0.0025,
+        min_volume=25_000,
+        stop_loss_percent=0.025,
+    )
+    event = MarketEvent(
+        source="test",
+        symbol="QQQ",
+        event_kind="bar",
+        price=101,
+        previous_close=100,
+        previous_bar_close=99.95,
+        volume=75_000,
+        vwap=100.1,
+        recent_volume=600_000,
+        average_recent_volume=40_000,
+    )
+
+    candidates = engine.evaluate_all(event)
+
+    assert any(candidate.strategy_id == "vwap_reclaim_v1" for candidate in candidates)
+
+
 def test_local_worker_approves_demo_candidate_in_paper_mode() -> None:
     settings.trading_mode = "paper"
     settings.allow_live_trading = False
@@ -135,6 +206,21 @@ def test_local_worker_defaults_to_no_real_broker_submission() -> None:
 
     assert result.broker_receipt is not None
     assert result.broker_receipt.broker_order_id.startswith("local_order_")
+
+
+def test_daily_recap_counts_strategy_and_provider_usage() -> None:
+    settings.trading_mode = "paper"
+    settings.allow_live_trading = False
+
+    run_single_cycle()
+    recap = get_daily_trade_recap()
+
+    assert recap.pipeline_runs == 1
+    assert recap.candidate_count == 1
+    assert recap.approved_count == 1
+    assert recap.submitted_orders == 1
+    assert any(provider.provider == "local-manual" for provider in recap.provider_usage)
+    assert any(strategy.strategy_id == "micro_breakout_v1" for strategy in recap.strategy_usage)
 
 
 def test_local_broker_account_status_is_redacted_demo_shape() -> None:
@@ -505,6 +591,29 @@ def test_exit_monitor_detects_take_profit_signal() -> None:
 
     assert len(signals) == 1
     assert signals[0].reason == "take_profit"
+    assert signals[0].execution_allowed is True
+
+
+def test_exit_monitor_detects_small_win_signal() -> None:
+    settings.autopilot_take_profit_percent = 6
+    signals = evaluate_exit_signals(
+        positions=[
+            BrokerPositionSummary(
+                symbol="SPY",
+                quantity=0.01,
+                market_value=1.02,
+                cost_basis=1,
+                unrealized_pl=0.02,
+                unrealized_pl_percent=0.02,
+                current_price=102,
+            )
+        ],
+        orders=[],
+        execution_allowed=True,
+    )
+
+    assert len(signals) == 1
+    assert signals[0].reason == "small_win"
     assert signals[0].execution_allowed is True
 
 

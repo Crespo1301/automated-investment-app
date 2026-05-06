@@ -11,6 +11,7 @@ from app.domain.models import (
 from app.domain.trading import (
     AutopilotState,
     BrokerAccountStatus,
+    DailyTradeRecap,
     ExitCheckResult,
     PipelineRunResult,
     PerformanceHistory,
@@ -21,6 +22,7 @@ from app.domain.trading import AuditSummary, BrokerReconciliationSnapshot, Safet
 from app.services.broker_adapter import get_active_alpaca_broker, get_alpaca_paper_broker
 from app.services.audit_store import (
     get_autopilot_state,
+    get_daily_trade_recap,
     get_performance_history,
     record_cancel_result,
     record_order_receipt,
@@ -276,6 +278,17 @@ def performance_history() -> PerformanceHistory:
     """Return recent local broker reconciliation history for charts."""
 
     return get_performance_history()
+
+
+@router.get(
+    "/api/performance/daily-recap",
+    response_model=DailyTradeRecap,
+    tags=["performance"],
+)
+def performance_daily_recap() -> DailyTradeRecap:
+    """Return today's provider, strategy, and compounding recap."""
+
+    return get_daily_trade_recap()
 
 
 @router.post(

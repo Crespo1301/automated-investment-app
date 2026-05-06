@@ -14,11 +14,14 @@ from app.domain.trading import (
     AutopilotState,
     BrokerOrderReceipt,
     BrokerReconciliationSnapshot,
+    DailyTradeRecap,
     MarketClockStatus,
     PerformanceHistory,
     PerformancePoint,
     PipelineRunResult,
+    ProviderUsageSummary,
     SafetyState,
+    StrategyUsageSummary,
 )
 
 
@@ -291,4 +294,108 @@ def get_performance_history(limit: int = 80) -> PerformanceHistory:
             "History is built from local broker reconciliation snapshots.",
             "Run dashboard refreshes or the autopilot loop to keep this chart current.",
         ],
+    )
+
+
+def get_daily_trade_recap(date: str | None = None) -> DailyTradeRecap:
+    """Summarize today's compounding inputs from local audit events."""
+
+    target_date = date or datetime.now(UTC).date().isoformat()
+    pipeline_runs = [
+        event
+        for event in _read_jsonl("pipeline-runs.jsonl")
+        if str(event.get("created_at", "")).startswith(target_date)
+    ]
+    portfolio_snapshots = [
+        event
+        for event in _read_jsonl("portfolio-snapshots.jsonl")
+        if str(event.get("created_at", "")).startswith(target_date)
+    ]
+    order_events = [
+        event
+        for event in _read_jsonl("order-events.jsonl")
+        if str(event.get("created_at", "")).startswith(target_date)
+    ]
+    provider_counts: dict[str, int] = {}
+    strategy_counts: dict[str, dict[str, int]] = {}
+    candidate_count = 0
+    approved_count = 0
+    rejected_count = 0
+    submitted_orders = 0
+
+    for event in pipeline_runs:
+        payload = event.get("payload") or {}
+        candidate = payload.get("candidate")
+        risk_decision = payload.get("risk_decision")
+        scored_candidate = payload.get("scored_candidate") or {}
+        broker_receipt = payload.get("broker_receipt")
+        if candidate:
+            candidate_count += 1
+            strategy_id = str(candidate.get("strategy_id") or "unknown")
+            strategy_counts.setdefault(
+                strategy_id,
+                {"candidates": 0, "approved": 0, "submitted": 0},
+            )
+            strategy_counts[strategy_id]["candidates"] += 1
+
+        ai_score = (scored_candidate.get("ai_score") or {}) if scored_candidate else {}
+        provider = str(ai_score.get("model_name") or "none")
+        if provider != "none":
+            provider_counts[provider] = provider_counts.get(provider, 0) + 1
+
+        if risk_decision:
+            state = str(risk_decision.get("state") or "")
+            if state == "approved":
+                approved_count += 1
+                if candidate:
+                    strategy_counts[str(candidate.get("strategy_id"))]["approved"] += 1
+            elif state == "rejected":
+                rejected_count += 1
+
+        if broker_receipt:
+            submitted_orders += 1
+            if candidate:
+                strategy_counts[str(candidate.get("strategy_id"))]["submitted"] += 1
+
+    portfolio_values = [
+        float((event.get("payload") or {}).get("account", {}).get("portfolio_value"))
+        for event in portfolio_snapshots
+        if (event.get("payload") or {}).get("account", {}).get("portfolio_value") is not None
+    ]
+    starting_value = portfolio_values[0] if portfolio_values else None
+    ending_value = portfolio_values[-1] if portfolio_values else None
+    portfolio_delta = (
+        round(ending_value - starting_value, 4)
+        if starting_value is not None and ending_value is not None
+        else None
+    )
+
+    provider_usage = [
+        ProviderUsageSummary(provider=provider, count=count)
+        for provider, count in sorted(provider_counts.items())
+    ]
+    strategy_usage = [
+        StrategyUsageSummary(strategy_id=strategy_id, **counts)
+        for strategy_id, counts in sorted(strategy_counts.items())
+    ]
+    notes = [
+        "Recap is built from local JSONL audit data.",
+        "Portfolio delta uses reconciliation snapshots and should be checked against Alpaca before making decisions.",
+    ]
+    if order_events and not submitted_orders:
+        notes.append("Order snapshots exist today, but no new pipeline submission was recorded.")
+
+    return DailyTradeRecap(
+        date=target_date,
+        starting_portfolio_value=starting_value,
+        ending_portfolio_value=ending_value,
+        portfolio_delta=portfolio_delta,
+        pipeline_runs=len(pipeline_runs),
+        candidate_count=candidate_count,
+        approved_count=approved_count,
+        rejected_count=rejected_count,
+        submitted_orders=submitted_orders,
+        provider_usage=provider_usage,
+        strategy_usage=strategy_usage,
+        notes=notes,
     )

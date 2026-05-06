@@ -143,6 +143,7 @@ class AlpacaBroker:
         )
         clock = self.get_market_clock()
         session_state = self._resolve_session_state(clock)
+        intraday_profiles = self._get_intraday_profiles(normalized_symbols, clock)
         events: list[MarketEvent] = []
         missing_symbols: list[str] = []
 
@@ -167,6 +168,7 @@ class AlpacaBroker:
             )
             volume = getattr(minute_bar, "volume", 0) or 0
             previous_close = getattr(previous_daily_bar, "close", None)
+            intraday_profile = intraday_profiles.get(symbol, {})
 
             if price is None or previous_close is None:
                 missing_symbols.append(symbol)
@@ -187,6 +189,14 @@ class AlpacaBroker:
                     previous_volume=self._optional_float(
                         getattr(previous_daily_bar, "volume", None)
                     ),
+                    vwap=intraday_profile.get("vwap"),
+                    opening_range_high=intraday_profile.get("opening_range_high"),
+                    opening_range_low=intraday_profile.get("opening_range_low"),
+                    recent_high=intraday_profile.get("recent_high"),
+                    recent_low=intraday_profile.get("recent_low"),
+                    recent_volume=intraday_profile.get("recent_volume"),
+                    average_recent_volume=intraday_profile.get("average_recent_volume"),
+                    previous_bar_close=intraday_profile.get("previous_bar_close"),
                     timestamp=timestamp,
                     session_state=session_state,
                 )
@@ -393,6 +403,79 @@ class AlpacaBroker:
             return None
 
         return float(value)
+
+    def _get_intraday_profiles(
+        self,
+        symbols: list[str],
+        clock: MarketClockStatus,
+    ) -> dict[str, dict[str, float]]:
+        """Build lightweight intraday context from recent minute bars."""
+
+        try:
+            from alpaca.data.requests import StockBarsRequest
+            from alpaca.data.timeframe import TimeFrame
+        except Exception:
+            return {}
+
+        eastern_now = (clock.timestamp or datetime.now(UTC)).astimezone(
+            ZoneInfo("America/New_York")
+        )
+        session_start = datetime.combine(
+            eastern_now.date(),
+            time(9, 30),
+            tzinfo=ZoneInfo("America/New_York"),
+        )
+        lookback_start = session_start
+
+        try:
+            bar_set = self.data_client.get_stock_bars(
+                StockBarsRequest(
+                    symbol_or_symbols=symbols,
+                    timeframe=TimeFrame.Minute,
+                    start=lookback_start.astimezone(UTC),
+                    end=eastern_now.astimezone(UTC),
+                )
+            )
+        except Exception:
+            return {}
+
+        profiles: dict[str, dict[str, float]] = {}
+        for symbol, bars in getattr(bar_set, "data", {}).items():
+            sorted_bars = sorted(bars, key=lambda bar: bar.timestamp)
+            if not sorted_bars:
+                continue
+
+            opening_bars = sorted_bars[:15]
+            recent_bars = sorted_bars[-10:]
+            volume_bars = sorted_bars[-30:]
+            total_volume = sum(float(bar.volume or 0) for bar in sorted_bars)
+            vwap_numerator = sum(
+                float((bar.vwap or bar.close) or 0) * float(bar.volume or 0)
+                for bar in sorted_bars
+            )
+            profiles[str(symbol).upper()] = {
+                "vwap": (
+                    round(vwap_numerator / total_volume, 4)
+                    if total_volume > 0
+                    else float(sorted_bars[-1].close)
+                ),
+                "opening_range_high": max(float(bar.high) for bar in opening_bars),
+                "opening_range_low": min(float(bar.low) for bar in opening_bars),
+                "recent_high": max(float(bar.high) for bar in recent_bars),
+                "recent_low": min(float(bar.low) for bar in recent_bars),
+                "recent_volume": sum(float(bar.volume or 0) for bar in recent_bars),
+                "average_recent_volume": (
+                    sum(float(bar.volume or 0) for bar in volume_bars)
+                    / max(1, len(volume_bars))
+                ),
+                "previous_bar_close": (
+                    float(sorted_bars[-2].close)
+                    if len(sorted_bars) >= 2
+                    else float(sorted_bars[-1].close)
+                ),
+            }
+
+        return profiles
 
     def _resolve_session_state(self, clock: MarketClockStatus) -> str:
         """Map the broker clock into the normalized market-event session state."""

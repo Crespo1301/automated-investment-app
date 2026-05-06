@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import type {
   AuditSummary,
   BrokerReconciliationSnapshot,
+  DailyTradeRecap,
   ExitCheckResult,
   PipelinePreview,
   ProtectionPlan,
@@ -234,6 +235,22 @@ async function getExitCheck(): Promise<ExitCheckResult | null> {
   }
 }
 
+async function getDailyRecap(): Promise<DailyTradeRecap | null> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/performance/daily-recap`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return response.json();
+  } catch {
+    return null;
+  }
+}
+
 function currencyFormatter(value: number) {
   return new Intl.NumberFormat("en-US", {
     currency: "USD",
@@ -250,6 +267,7 @@ export default async function HomePage() {
   const safety = await getSafetyStatus();
   const protectionPlan = await getProtectionPlan();
   const exitCheck = await getExitCheck();
+  const dailyRecap = await getDailyRecap();
   const account = reconciliation?.account;
   const orders = reconciliation?.orders ?? [];
   const positions = reconciliation?.positions ?? [];
@@ -390,6 +408,75 @@ export default async function HomePage() {
         </section>
 
         <LivePerformancePanel />
+
+        <section className="recap-grid" aria-label="Daily compounding recap">
+          <article className="panel">
+            <div className="section-title">
+              <div>
+                <h2>Daily Recap</h2>
+                <p>Provider usage, strategy activity, and portfolio delta for today's loop.</p>
+              </div>
+              <span className={(dailyRecap?.portfolio_delta ?? 0) >= 0 ? "state-pill state-healthy" : "state-pill state-blocked"}>
+                {dailyRecap?.portfolio_delta != null
+                  ? `${dailyRecap.portfolio_delta >= 0 ? "+" : ""}${currencyFormatter(dailyRecap.portfolio_delta)}`
+                  : "offline"}
+              </span>
+            </div>
+
+            <div className="recap-metrics">
+              <div>
+                <span>Runs</span>
+                <strong>{dailyRecap?.pipeline_runs ?? 0}</strong>
+              </div>
+              <div>
+                <span>Candidates</span>
+                <strong>{dailyRecap?.candidate_count ?? 0}</strong>
+              </div>
+              <div>
+                <span>Approved</span>
+                <strong>{dailyRecap?.approved_count ?? 0}</strong>
+              </div>
+              <div>
+                <span>Submitted</span>
+                <strong>{dailyRecap?.submitted_orders ?? 0}</strong>
+              </div>
+            </div>
+
+            <div className="recap-columns">
+              <div>
+                <h3>Providers</h3>
+                <div className="compact-list">
+                  {dailyRecap && dailyRecap.provider_usage.length > 0 ? (
+                    dailyRecap.provider_usage.map((provider) => (
+                      <div className="compact-row" key={provider.provider}>
+                        <span>{provider.provider}</span>
+                        <strong>{provider.count}</strong>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="thesis">No scored candidates recorded today.</p>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <h3>Strategies</h3>
+                <div className="compact-list">
+                  {dailyRecap && dailyRecap.strategy_usage.length > 0 ? (
+                    dailyRecap.strategy_usage.map((strategy) => (
+                      <div className="compact-row" key={strategy.strategy_id}>
+                        <span>{strategy.strategy_id}</span>
+                        <strong>{strategy.submitted}/{strategy.candidates}</strong>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="thesis">No strategy candidates recorded today.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </article>
+        </section>
 
         <section className="content-grid">
           <div className="stack">

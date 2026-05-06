@@ -20,7 +20,7 @@ from app.services.broker_adapter import (
     get_broker,
 )
 from app.services.risk_engine import RiskEngine
-from app.services.strategy_engine import MicroBreakoutStrategy
+from app.services.strategy_engine import AggressiveStrategyEngine
 
 
 def get_risk_limits() -> RiskLimits:
@@ -113,7 +113,7 @@ def run_single_cycle(
         buying_power=portfolio_state.buying_power,
         target_position_percent=limits.target_position_percent,
     )
-    strategy = MicroBreakoutStrategy(
+    strategy = AggressiveStrategyEngine(
         allowed_symbols=limits.allowed_symbols,
         proposed_notional=target_notional,
         breakout_threshold=settings.strategy_breakout_threshold,
@@ -275,7 +275,7 @@ def _get_cycle_events(
 
 def _select_best_candidate(
     events: list[MarketEvent],
-    strategy: MicroBreakoutStrategy,
+    strategy: AggressiveStrategyEngine,
 ) -> tuple[MarketEvent, TradeCandidate | None]:
     """Choose the strongest candidate from the current cycle's events."""
 
@@ -293,16 +293,13 @@ def _select_best_candidate(
     selected_event = events[0]
     selected_candidate = None
     for market_event in events:
-        candidate = strategy.evaluate(market_event)
-        if candidate is None:
-            continue
-
-        if (
-            selected_candidate is None
-            or candidate.confidence_hint > selected_candidate.confidence_hint
-        ):
-            selected_event = market_event
-            selected_candidate = candidate
+        for candidate in strategy.evaluate_all(market_event):
+            if (
+                selected_candidate is None
+                or candidate.confidence_hint > selected_candidate.confidence_hint
+            ):
+                selected_event = market_event
+                selected_candidate = candidate
 
     return selected_event, selected_candidate
 

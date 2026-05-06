@@ -39,6 +39,14 @@ class MarketEvent(BaseModel):
     day_low: float | None = None
     day_volume: float | None = None
     previous_volume: float | None = None
+    vwap: float | None = None
+    opening_range_high: float | None = None
+    opening_range_low: float | None = None
+    recent_high: float | None = None
+    recent_low: float | None = None
+    recent_volume: float | None = None
+    average_recent_volume: float | None = None
+    previous_bar_close: float | None = None
     session_state: Literal["pre_market", "regular", "after_hours", "closed"] = "regular"
 
 
@@ -232,7 +240,7 @@ class ExitSignal(BaseModel):
     """Autopilot exit signal for one open position."""
 
     symbol: str
-    reason: Literal["stop_loss", "take_profit"]
+    reason: Literal["stop_loss", "small_win", "take_profit"]
     current_price: float
     average_entry_price: float
     trigger_price: float
@@ -272,6 +280,39 @@ class PerformanceHistory(BaseModel):
     """Recent local performance history from broker reconciliation snapshots."""
 
     points: list[PerformancePoint]
+    notes: list[str]
+
+
+class ProviderUsageSummary(BaseModel):
+    """Daily scoring provider usage summary."""
+
+    provider: str
+    count: int
+
+
+class StrategyUsageSummary(BaseModel):
+    """Daily strategy lane usage summary."""
+
+    strategy_id: str
+    candidates: int
+    approved: int
+    submitted: int
+
+
+class DailyTradeRecap(BaseModel):
+    """Local daily recap for compounding review."""
+
+    date: str
+    starting_portfolio_value: float | None = None
+    ending_portfolio_value: float | None = None
+    portfolio_delta: float | None = None
+    pipeline_runs: int = 0
+    candidate_count: int = 0
+    approved_count: int = 0
+    rejected_count: int = 0
+    submitted_orders: int = 0
+    provider_usage: list[ProviderUsageSummary]
+    strategy_usage: list[StrategyUsageSummary]
     notes: list[str]
 
 
