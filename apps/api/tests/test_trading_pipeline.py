@@ -25,6 +25,7 @@ from app.domain.trading import BrokerOrderReceipt, BrokerOrderSummary, BrokerPos
 def isolate_runtime_settings(tmp_path):
     original = {
         "trading_mode": settings.trading_mode,
+        "position_size_percent": settings.position_size_percent,
         "allow_live_trading": settings.allow_live_trading,
         "allow_outside_market_hours": settings.allow_outside_market_hours,
         "autopilot_allow_entries": settings.autopilot_allow_entries,
@@ -37,6 +38,7 @@ def isolate_runtime_settings(tmp_path):
         "runtime_data_dir": settings.runtime_data_dir,
     }
     settings.trading_mode = "paper"
+    settings.position_size_percent = 0.25
     settings.allow_live_trading = False
     settings.allow_outside_market_hours = False
     settings.autopilot_allow_entries = False
@@ -55,16 +57,16 @@ def isolate_runtime_settings(tmp_path):
 def test_confirmed_watchlist_defaults_are_loaded() -> None:
     symbols = configured_symbols()
 
-    assert {"SPY", "QQQ", "NVDA", "AAPL", "MSFT", "AMZN"}.issubset(symbols)
-    assert len(symbols) > 5
+    assert {"SPY", "QQQ", "SMH", "XLK", "NVDA", "AAPL", "MSFT", "AMZN"}.issubset(symbols)
+    assert len(symbols) >= 30
 
 
 def test_starter_guardrails_match_confirmed_limits() -> None:
     settings.allow_live_trading = False
     limits = get_risk_limits()
 
-    assert limits.max_notional_per_trade == 2
-    assert 1 <= limits.max_open_positions <= 3
+    assert limits.target_position_percent == 0.25
+    assert limits.max_open_positions == 6
     assert limits.max_live_trades_per_day == 3
     assert 2 <= limits.max_daily_loss <= 2.25
     assert limits.allow_live_trading is False
@@ -77,10 +79,12 @@ def test_local_worker_approves_demo_candidate_in_paper_mode() -> None:
 
     assert result.candidate is not None
     assert result.candidate.symbol == "SPY"
+    assert result.candidate.proposed_notional == 2.5
     assert result.risk_decision is not None
     assert result.risk_decision.state == "approved"
     assert result.execution_intent is not None
     assert result.execution_intent.mode == "paper"
+    assert result.execution_intent.approved_notional == 2.5
     assert result.broker_receipt is not None
     assert result.broker_receipt.status == "accepted_local_paper"
 
@@ -212,6 +216,7 @@ def test_live_cycle_rejects_synthetic_demo_entry(monkeypatch) -> None:
 
     class FakeAccount:
         buying_power = 10
+        portfolio_value = 10
         account_mode = "live"
 
     class FakeBroker:
@@ -261,6 +266,7 @@ def test_live_cycle_uses_real_market_data_events(monkeypatch) -> None:
 
     class FakeAccount:
         buying_power = 10
+        portfolio_value = 10
         account_mode = "live"
 
     class FakeClock:
@@ -325,6 +331,7 @@ def test_live_cycle_uses_real_market_data_events(monkeypatch) -> None:
     assert result.risk_decision.state == "approved"
     assert result.execution_intent is not None
     assert result.execution_intent.symbol == "QQQ"
+    assert result.execution_intent.approved_notional == 2.5
     assert result.broker_receipt is not None
 
 

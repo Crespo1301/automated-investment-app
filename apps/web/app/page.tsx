@@ -266,7 +266,7 @@ export default async function HomePage() {
           ? "warning"
           : "healthy",
       last_event: autopilot?.entry_execution_enabled
-        ? "Autonomous entries are armed, but live synthetic demo signals are blocked until real market data is wired."
+        ? "Autonomous entries are armed and scanning the live watchlist for breakout setups."
         : "Entry execution is locked while we keep the live account in watch mode.",
     },
     {

@@ -77,6 +77,7 @@ class PortfolioState(BaseModel):
     live_trades_today: int = 0
     realized_pnl_today: float = 0
     buying_power: float = 10
+    portfolio_value: float = 10
     trading_mode: TradingMode = "paper"
 
 
@@ -84,7 +85,7 @@ class RiskLimits(BaseModel):
     """Operator-defined guardrails for autonomous execution."""
 
     allowed_symbols: list[str]
-    max_notional_per_trade: float
+    target_position_percent: float
     max_open_positions: int
     max_live_trades_per_day: int
     max_daily_loss: float

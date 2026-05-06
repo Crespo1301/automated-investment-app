@@ -14,9 +14,12 @@ class Settings(BaseSettings):
     app_name: str = "Automated Investment API"
     base_currency: str = "USD"
     trading_mode: str = "paper"
-    allowed_symbols: str = "SPY,QQQ,NVDA,TSLA,AAPL"
-    max_notional_per_trade: float = 2.0
-    max_open_positions: int = 1
+    allowed_symbols: str = (
+        "SPY,QQQ,DIA,IWM,VTI,VOO,SCHD,XLK,XLF,XLV,XLI,XLE,XLP,XLY,SMH,SOXX,"
+        "NVDA,AAPL,MSFT,AMZN,GOOGL,META,AMD,AVGO,COST,JPM,V,MA,UNH,XOM,WMT,PG,HD"
+    )
+    position_size_percent: float = 0.25
+    max_open_positions: int = 6
     max_live_trades_per_day: int = 3
     max_daily_loss: float = 2.0
     allow_live_trading: bool = False

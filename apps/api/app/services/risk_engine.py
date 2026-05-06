@@ -29,12 +29,6 @@ class RiskEngine:
         if symbol not in self.limits.allowed_symbols:
             reasons.append(f"{symbol} is outside the allowed symbol universe.")
 
-        if candidate.proposed_notional > self.limits.max_notional_per_trade:
-            reasons.append(
-                "Proposed notional exceeds max notional per trade "
-                f"of ${self.limits.max_notional_per_trade:.2f}."
-            )
-
         if portfolio_state.open_positions >= self.limits.max_open_positions:
             reasons.append("Open position limit has already been reached.")
 
@@ -50,8 +44,12 @@ class RiskEngine:
         if scored_candidate.ai_score.score < 0.55:
             reasons.append("AI score is below the minimum approval threshold.")
 
-        if candidate.proposed_notional > portfolio_state.buying_power:
-            reasons.append("Buying power is below proposed notional.")
+        approved_notional = round(
+            min(candidate.proposed_notional, portfolio_state.buying_power),
+            2,
+        )
+        if approved_notional < 1:
+            reasons.append("Approved notional is below Alpaca's $1 fractional minimum.")
 
         if reasons:
             return (
@@ -63,11 +61,6 @@ class RiskEngine:
                 None,
             )
 
-        approved_notional = min(
-            candidate.proposed_notional,
-            self.limits.max_notional_per_trade,
-            portfolio_state.buying_power,
-        )
         decision = RiskDecision(
             state="approved",
             candidate_id=candidate.candidate_id,
@@ -85,4 +78,3 @@ class RiskEngine:
             client_order_id=f"{candidate.strategy_id}-{candidate.candidate_id}",
         )
         return decision, intent
-

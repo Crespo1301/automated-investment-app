@@ -28,7 +28,7 @@ def get_risk_limits() -> RiskLimits:
 
     return RiskLimits(
         allowed_symbols=configured_symbols(),
-        max_notional_per_trade=settings.max_notional_per_trade,
+        target_position_percent=settings.position_size_percent,
         max_open_positions=settings.max_open_positions,
         max_live_trades_per_day=settings.max_live_trades_per_day,
         max_daily_loss=settings.max_daily_loss,
@@ -46,6 +46,7 @@ def get_default_portfolio_state() -> PortfolioState:
         live_trades_today=0,
         realized_pnl_today=0,
         buying_power=10,
+        portfolio_value=10,
         trading_mode="live" if settings.trading_mode == "live" else "paper",
     )
 
@@ -81,6 +82,7 @@ def get_portfolio_state_from_broker(broker: AlpacaBroker) -> PortfolioState:
         live_trades_today=trades_today,
         realized_pnl_today=0,
         buying_power=account.buying_power,
+        portfolio_value=account.portfolio_value,
         trading_mode=account.account_mode,
     )
 
@@ -97,18 +99,24 @@ def run_single_cycle(
     """
 
     limits = get_risk_limits()
-    strategy = MicroBreakoutStrategy(
-        allowed_symbols=limits.allowed_symbols,
-        proposed_notional=limits.max_notional_per_trade,
-    )
-    broker = None
     portfolio_state = get_default_portfolio_state()
+    broker = None
     if use_alpaca_paper:
         broker = get_alpaca_paper_broker()
         portfolio_state = get_portfolio_state_from_broker(broker)
     elif settings.trading_mode == "live" and settings.allow_live_trading:
         broker = get_active_alpaca_broker()
         portfolio_state = get_portfolio_state_from_broker(broker)
+
+    target_notional = _calculate_target_notional(
+        portfolio_value=portfolio_state.portfolio_value,
+        buying_power=portfolio_state.buying_power,
+        target_position_percent=limits.target_position_percent,
+    )
+    strategy = MicroBreakoutStrategy(
+        allowed_symbols=limits.allowed_symbols,
+        proposed_notional=target_notional,
+    )
 
     events = _get_cycle_events(event=event, broker=broker, limits=limits)
     selected_event, candidate = _select_best_candidate(events, strategy)
@@ -294,3 +302,14 @@ def _select_best_candidate(
             selected_candidate = candidate
 
     return selected_event, selected_candidate
+
+
+def _calculate_target_notional(
+    portfolio_value: float,
+    buying_power: float,
+    target_position_percent: float,
+) -> float:
+    """Size each new entry as a percent of the current portfolio."""
+
+    desired_notional = max(1.0, portfolio_value * target_position_percent)
+    return round(min(desired_notional, buying_power), 2)
