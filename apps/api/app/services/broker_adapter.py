@@ -357,6 +357,12 @@ class AlpacaBroker:
         )
         if position is None or position.quantity <= 0:
             raise ValueError(f"No open long position found for {normalized_symbol}.")
+        if position.market_value < settings.minimum_order_notional:
+            raise ValueError(
+                f"{normalized_symbol} position value is below the ${settings.minimum_order_notional:.2f} minimum order guard."
+            )
+        if self._has_open_sell_order(normalized_symbol):
+            raise ValueError(f"An open sell order already exists for {normalized_symbol}.")
 
         client_order_id = new_id(f"manual_exit_{normalized_symbol.lower()}")
         order = self.client.submit_order(
@@ -377,6 +383,23 @@ class AlpacaBroker:
             submitted_notional=position.market_value,
             raw_message=f"Alpaca accepted manual sell order with client id {client_order_id}.",
         )
+
+    def _has_open_sell_order(self, symbol: str) -> bool:
+        open_statuses = {
+            "accepted",
+            "new",
+            "pending_new",
+            "partially_filled",
+            "pending_replace",
+            "pending_cancel",
+        }
+        for order in self.list_recent_orders(limit=50):
+            status = order.status.split(".")[-1].lower()
+            side = order.side.split(".")[-1].lower()
+            if order.symbol.upper() == symbol.upper() and side == "sell" and status in open_statuses:
+                return True
+
+        return False
 
     def _order_to_summary(self, order: object) -> BrokerOrderSummary:
         """Normalize an Alpaca SDK order object."""

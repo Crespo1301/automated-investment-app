@@ -22,6 +22,8 @@ def evaluate_exit_signals(
     for position in positions:
         if position.quantity <= 0 or position.current_price is None or position.cost_basis <= 0:
             continue
+        if position.market_value < settings.minimum_order_notional:
+            continue
         if _has_open_sell_order(position.symbol, orders):
             continue
 
@@ -78,6 +80,10 @@ def run_exit_check(broker: object, *, execute: bool) -> ExitCheckResult:
 
     snapshot = broker.get_reconciliation_snapshot(order_limit=50)
     execution_allowed = execute and settings.autopilot_allow_exits
+    market_is_open = _market_is_open(broker)
+    if execution_allowed and not market_is_open and not settings.allow_outside_market_hours:
+        execution_allowed = False
+
     signals = evaluate_exit_signals(
         snapshot.positions,
         snapshot.orders,
@@ -94,7 +100,10 @@ def run_exit_check(broker: object, *, execute: bool) -> ExitCheckResult:
     notes = [
         "Exit monitor is app-managed and uses market sells during regular market hours.",
         "Existing open sell orders suppress duplicate exit signals.",
+        f"Positions below ${settings.minimum_order_notional:.2f} market value are skipped to avoid sub-dollar trade attempts.",
     ]
+    if not market_is_open and not settings.allow_outside_market_hours:
+        notes.append("Exit execution is locked because the regular market is closed.")
     if signals and not execution_allowed:
         notes.append("Exit signal found, but execution is locked by INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=false.")
 
@@ -117,3 +126,12 @@ def _has_open_sell_order(symbol: str, orders: list[BrokerOrderSummary]) -> bool:
             return True
 
     return False
+
+
+def _market_is_open(broker: object) -> bool:
+    get_market_clock = getattr(broker, "get_market_clock", None)
+    if get_market_clock is None:
+        return True
+
+    clock = get_market_clock()
+    return bool(getattr(clock, "is_open", False))

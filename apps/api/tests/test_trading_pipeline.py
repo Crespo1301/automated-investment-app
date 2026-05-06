@@ -38,6 +38,7 @@ def isolate_runtime_settings(tmp_path):
         "autopilot_small_win_percent": settings.autopilot_small_win_percent,
         "autopilot_stop_loss_percent": settings.autopilot_stop_loss_percent,
         "autopilot_take_profit_percent": settings.autopilot_take_profit_percent,
+        "minimum_order_notional": settings.minimum_order_notional,
         "strategy_breakout_threshold": settings.strategy_breakout_threshold,
         "strategy_min_volume": settings.strategy_min_volume,
         "strategy_stop_loss_percent": settings.strategy_stop_loss_percent,
@@ -61,6 +62,7 @@ def isolate_runtime_settings(tmp_path):
     settings.autopilot_small_win_percent = 1.5
     settings.autopilot_stop_loss_percent = 2
     settings.autopilot_take_profit_percent = 3
+    settings.minimum_order_notional = 1
     settings.strategy_breakout_threshold = 0.0025
     settings.strategy_min_volume = 25_000
     settings.strategy_stop_loss_percent = 0.025
@@ -677,10 +679,10 @@ def test_exit_monitor_detects_stop_loss_signal() -> None:
         positions=[
             BrokerPositionSummary(
                 symbol="SPY",
-                quantity=0.01,
-                market_value=0.98,
-                cost_basis=1,
-                unrealized_pl=-0.02,
+                quantity=0.02,
+                market_value=1.95,
+                cost_basis=2,
+                unrealized_pl=-0.05,
                 unrealized_pl_percent=-0.02,
                 current_price=97.5,
             )
@@ -692,6 +694,26 @@ def test_exit_monitor_detects_stop_loss_signal() -> None:
     assert len(signals) == 1
     assert signals[0].reason == "stop_loss"
     assert signals[0].execution_allowed is False
+
+
+def test_exit_monitor_skips_sub_dollar_position() -> None:
+    signals = evaluate_exit_signals(
+        positions=[
+            BrokerPositionSummary(
+                symbol="SPY",
+                quantity=0.005,
+                market_value=0.49,
+                cost_basis=0.5,
+                unrealized_pl=-0.01,
+                unrealized_pl_percent=-0.02,
+                current_price=97.5,
+            )
+        ],
+        orders=[],
+        execution_allowed=True,
+    )
+
+    assert signals == []
 
 
 def test_exit_monitor_detects_take_profit_signal() -> None:
@@ -766,6 +788,58 @@ def test_exit_monitor_skips_position_with_open_sell_order() -> None:
     )
 
     assert signals == []
+
+
+def test_exit_check_does_not_execute_when_market_is_closed() -> None:
+    from app.domain.trading import BrokerAccountStatus, BrokerReconciliationSnapshot, MarketClockStatus
+    from app.services.exit_monitor import run_exit_check
+
+    class FakeBroker:
+        submitted = False
+
+        def get_market_clock(self):
+            return MarketClockStatus(is_open=False)
+
+        def get_reconciliation_snapshot(self, order_limit=50):
+            return BrokerReconciliationSnapshot(
+                account=BrokerAccountStatus(
+                    broker="test",
+                    account_mode="live",
+                    account_id_hint="local",
+                    status="active",
+                    currency="USD",
+                    buying_power=10,
+                    cash=10,
+                    portfolio_value=10,
+                ),
+                orders=[],
+                positions=[
+                    BrokerPositionSummary(
+                        symbol="SPY",
+                        quantity=0.01,
+                        market_value=1.04,
+                        cost_basis=1,
+                        unrealized_pl=0.04,
+                        unrealized_pl_percent=0.04,
+                        current_price=104,
+                    )
+                ],
+            )
+
+        def submit_position_market_sell(self, symbol):
+            self.submitted = True
+            raise AssertionError("sell should not be submitted while market is closed")
+
+    settings.autopilot_allow_exits = True
+    settings.allow_outside_market_hours = False
+    broker = FakeBroker()
+
+    result = run_exit_check(broker, execute=True)
+
+    assert broker.submitted is False
+    assert result.signals
+    assert result.submitted_receipts == []
+    assert any("regular market is closed" in note for note in result.notes)
 
 
 def test_protection_plan_marks_open_position_without_sell_order_unprotected() -> None:
