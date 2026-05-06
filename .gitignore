@@ -1,0 +1,14 @@
+.next
+node_modules
+.venv
+__pycache__
+.pytest_cache
+.mypy_cache
+dist
+build
+.env
+.env.local
+.DS_Store
+
+.env.ai.local
+.mcp.json

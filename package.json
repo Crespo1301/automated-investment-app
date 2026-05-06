@@ -1,0 +1,21 @@
+{
+  "name": "automated-investment-app",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace apps/web run dev",
+    "build:web": "npm --workspace apps/web run build",
+    "lint:web": "npm --workspace apps/web run lint",
+    "graph:build": "/home/cresp3/.local/bin/code-review-graph build --repo /home/cresp3/automated-investment-app",
+    "graph:status": "/home/cresp3/.local/bin/code-review-graph status --repo /home/cresp3/automated-investment-app",
+    "graph:wiki": "/home/cresp3/.local/bin/code-review-graph wiki --repo /home/cresp3/automated-investment-app",
+    "spec:list": "openspec list",
+    "spec:validate": "openspec validate --all",
+    "stitch:init": "npx -y @_davideast/stitch-mcp init",
+    "stitch:doctor": "bash ./scripts/stitch-doctor.sh",
+    "stitch:proxy": "bash ./scripts/stitch-proxy.sh"
+  }
+}
