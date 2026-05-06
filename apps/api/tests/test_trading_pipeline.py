@@ -2,7 +2,7 @@ import pytest
 
 from app.core.config import configured_symbols
 from app.core.config import settings
-from app.domain.trading import MarketEvent, TradeCandidate
+from app.domain.trading import MarketEvent, ScoredTradeCandidate, TradeCandidate
 from app.services.ai_scorer import TradeScorer
 from app.services.audit_store import get_autopilot_state, get_safety_state
 from app.services.autopilot import enable_autopilot, run_autopilot_once
@@ -26,6 +26,8 @@ def isolate_runtime_settings(tmp_path):
     original = {
         "trading_mode": settings.trading_mode,
         "position_size_percent": settings.position_size_percent,
+        "anthropic_api_key": settings.anthropic_api_key,
+        "anthropic_model": settings.anthropic_model,
         "allow_live_trading": settings.allow_live_trading,
         "allow_outside_market_hours": settings.allow_outside_market_hours,
         "autopilot_allow_entries": settings.autopilot_allow_entries,
@@ -39,6 +41,8 @@ def isolate_runtime_settings(tmp_path):
     }
     settings.trading_mode = "paper"
     settings.position_size_percent = 0.25
+    settings.anthropic_api_key = None
+    settings.anthropic_model = "claude-opus-4-7"
     settings.allow_live_trading = False
     settings.allow_outside_market_hours = False
     settings.autopilot_allow_entries = False
@@ -135,10 +139,78 @@ def test_local_heuristic_score_is_bounded_and_explainable() -> None:
 
     scored = TradeScorer().score(candidate)
 
-    assert scored.ai_score.model_name == "local-heuristic"
+    assert scored.ai_score.model_name == "local-manual"
     assert 0.55 <= scored.ai_score.score <= 0.82
     assert "Local heuristic blended" in scored.ai_score.summary
     assert any("Fallback score is capped" in concern for concern in scored.ai_score.concerns)
+
+
+def test_trade_scorer_falls_back_from_claude_to_openai(monkeypatch) -> None:
+    settings.anthropic_api_key = "test-anthropic"
+    settings.openai_api_key = "test-openai"
+    candidate = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="micro_breakout_v1",
+        symbol="SPY",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=105,
+        proposed_stop=103.42,
+        trigger_evidence=["Price moved above previous close."],
+        confidence_hint=0.74,
+    )
+
+    def fail_anthropic(self, candidate):
+        raise RuntimeError("anthropic down")
+
+    def succeed_openai(self, candidate):
+        return ScoredTradeCandidate(
+            candidate=candidate,
+            ai_score=TradeScorer()._score_with_fallback(
+                candidate,
+                summary="",
+                concerns=[],
+                model_name=settings.openai_model,
+            ).ai_score,
+        )
+
+    monkeypatch.setattr(TradeScorer, "_score_with_anthropic", fail_anthropic)
+    monkeypatch.setattr(TradeScorer, "_score_with_openai", succeed_openai)
+
+    scored = TradeScorer().score(candidate)
+
+    assert scored.ai_score.model_name == settings.openai_model
+
+
+def test_trade_scorer_falls_back_to_manual_when_models_fail(monkeypatch) -> None:
+    settings.anthropic_api_key = "test-anthropic"
+    settings.openai_api_key = "test-openai"
+    candidate = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="micro_breakout_v1",
+        symbol="SPY",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=105,
+        proposed_stop=103.42,
+        trigger_evidence=["Price moved above previous close."],
+        confidence_hint=0.74,
+    )
+
+    monkeypatch.setattr(
+        TradeScorer,
+        "_score_with_anthropic",
+        lambda self, candidate: (_ for _ in ()).throw(RuntimeError("anthropic down")),
+    )
+    monkeypatch.setattr(
+        TradeScorer,
+        "_score_with_openai",
+        lambda self, candidate: (_ for _ in ()).throw(RuntimeError("openai down")),
+    )
+
+    scored = TradeScorer().score(candidate)
+
+    assert scored.ai_score.model_name == "local-manual-anthropic-openai-fallback"
 
 
 def test_queue_for_open_requires_live_permission() -> None:

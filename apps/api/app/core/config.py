@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     alpaca_api_key: str | None = None
     alpaca_secret_key: str | None = None
     alpaca_paper: bool = True
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-opus-4-7"
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.4-mini"
 

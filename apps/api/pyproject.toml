@@ -9,6 +9,7 @@ description = "FastAPI backend for an autonomous investment platform."
 requires-python = ">=3.12"
 dependencies = [
   "alpaca-py>=0.43.0,<1.0.0",
+  "anthropic>=0.72.0,<1.0.0",
   "fastapi>=0.115.0,<1.0.0",
   "uvicorn[standard]>=0.32.0,<1.0.0",
   "pydantic-settings>=2.6.0,<3.0.0",
