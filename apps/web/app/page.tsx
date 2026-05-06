@@ -4,68 +4,10 @@ import { revalidatePath } from "next/cache";
 import type {
   AuditSummary,
   BrokerReconciliationSnapshot,
-  DashboardSnapshot,
   ExitCheckResult,
   PipelinePreview,
   ProtectionPlan,
 } from "@/lib/contracts";
-
-const demoSnapshot: DashboardSnapshot = {
-  metrics: [
-    { label: "Net liquidation", value: "$102,480.22", change: "+1.82% today" },
-    { label: "Open risk", value: "1.4%", change: "of deployable capital" },
-    { label: "Active strategies", value: "2 live / 1 paper" },
-    { label: "Signals pending", value: "3", change: "awaiting risk review" },
-  ],
-  positions: [
-    {
-      symbol: "NVDA",
-      name: "NVIDIA",
-      allocation: 0.18,
-      unrealized_pnl_percent: 12.3,
-      thesis: "Momentum leader tracked by the intraday breakout lane.",
-    },
-    {
-      symbol: "SPY",
-      name: "SPDR S&P 500 ETF",
-      allocation: 0.34,
-      unrealized_pnl_percent: 4.8,
-      thesis: "Core benchmark exposure used to measure market regime drift.",
-    },
-    {
-      symbol: "CASH",
-      name: "Deployable cash",
-      allocation: 0.21,
-      unrealized_pnl_percent: 0,
-      thesis: "Held back to respect drawdown limits and new-signal capacity.",
-    },
-  ],
-  strategies: [
-    {
-      name: "Intraday Breakout",
-      mode: "live",
-      last_event: "Entered NVDA after a volume expansion confirmation.",
-      risk_state: "healthy",
-    },
-    {
-      name: "Mean Reversion",
-      mode: "paper",
-      last_event: "Queued two oversold names for paper validation only.",
-      risk_state: "healthy",
-    },
-    {
-      name: "Overnight Swing",
-      mode: "disabled",
-      last_event: "Awaiting symbol universe and stop policy.",
-      risk_state: "warning",
-    },
-  ],
-  alerts: [
-    "Broker passthrough is still a scaffold; no orders are routed yet.",
-    "AI scoring contract is documented but not wired to a live provider.",
-    "Risk engine shape is fixed early so we can preserve paper/live parity.",
-  ],
-};
 
 const demoPipeline: PipelinePreview = {
   pipeline_name: "Live Pattern To Order Lifecycle",
@@ -292,10 +234,6 @@ async function getExitCheck(): Promise<ExitCheckResult | null> {
   }
 }
 
-function percentFormatter(value: number) {
-  return `${Math.round(value * 100)}%`;
-}
-
 function currencyFormatter(value: number) {
   return new Intl.NumberFormat("en-US", {
     currency: "USD",
@@ -318,6 +256,36 @@ export default async function HomePage() {
   const killSwitchEnabled = safety?.safety_state.kill_switch_enabled ?? false;
   const autopilot = safety?.autopilot_state;
   const marketOpen = safety?.market_clock?.is_open ?? false;
+  const strategyLanes = [
+    {
+      name: "Micro Breakout v1",
+      mode: account?.account_mode ?? "offline",
+      risk_state: killSwitchEnabled
+        ? "blocked"
+        : autopilot?.entry_execution_enabled
+          ? "warning"
+          : "healthy",
+      last_event: autopilot?.entry_execution_enabled
+        ? "Autonomous entries are armed, but live synthetic demo signals are blocked until real market data is wired."
+        : "Entry execution is locked while we keep the live account in watch mode.",
+    },
+    {
+      name: "Exit Monitor",
+      mode: autopilot?.exit_execution_enabled ? "live" : "locked",
+      risk_state: exitCheck?.signals.length ? "warning" : "healthy",
+      last_event: exitCheck?.signals.length
+        ? `${exitCheck.signals.length} exit signal waiting on current protections and execution settings.`
+        : "No stop-loss or take-profit signals are active right now.",
+    },
+    {
+      name: "Queue For Open",
+      mode: marketOpen ? "closed" : "ready",
+      risk_state: marketOpen ? "blocked" : "healthy",
+      last_event: marketOpen
+        ? "Regular session is open, use live execution controls instead of queue-for-open."
+        : `Queue-for-open is available until ${safety?.market_clock?.next_open ?? "market open"}.`,
+    },
+  ];
   const openOrders = orders.filter((order) =>
     ["ACCEPTED", "NEW", "PENDING_NEW", "PARTIALLY_FILLED", "PENDING_CANCEL"].includes(
       cleanEnum(order.status).toUpperCase(),
@@ -346,7 +314,12 @@ export default async function HomePage() {
           change: orders[0] ? cleanEnum(orders[0].status) : "none",
         },
       ]
-    : demoSnapshot.metrics;
+    : [
+        { label: "Portfolio value", value: "Offline", change: "API not connected" },
+        { label: "Buying power", value: "Offline", change: "API not connected" },
+        { label: "Open positions", value: "0", change: "No broker data yet" },
+        { label: "Allowed symbols", value: "Offline", change: "Start the API to load config" },
+      ];
 
   return (
     <main className="app-frame">
@@ -557,19 +530,11 @@ export default async function HomePage() {
                         </form>
                       </div>
                     ))
-                  : demoSnapshot.positions.map((position) => (
-                      <div className="table-row" key={position.symbol}>
-                        <div>
-                          <strong>{position.symbol}</strong>
-                          <p>{position.name}</p>
-                          <p className="thesis">{position.thesis}</p>
-                        </div>
-                        <span>{percentFormatter(position.allocation)}</span>
-                        <span className={position.unrealized_pnl_percent >= 0 ? "positive" : "negative"}>
-                          {position.unrealized_pnl_percent.toFixed(1)}%
-                        </span>
-                      </div>
-                    ))}
+                  : (
+                    <div className="empty-state">
+                      No live Alpaca positions are open yet. This section will populate from broker reconciliation once the account actually holds something.
+                    </div>
+                  )}
               </div>
             </article>
 
@@ -790,11 +755,11 @@ export default async function HomePage() {
               <div className="section-title">
                 <div>
                   <h2>Strategy lanes</h2>
-                  <p>Mode, state, and latest event per lane.</p>
+                  <p>Configured lanes and current live readiness.</p>
                 </div>
               </div>
               <div className="list">
-                {demoSnapshot.strategies.map((strategy) => (
+                {strategyLanes.map((strategy) => (
                   <div className="list-item strategy-row" key={strategy.name}>
                     <div className="row-top">
                       <strong>{strategy.name}</strong>
