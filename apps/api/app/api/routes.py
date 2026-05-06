@@ -331,6 +331,30 @@ def sell_position_market(symbol: str) -> dict[str, object]:
     return {"broker": "alpaca", "mode": "active-config", "receipt": receipt.model_dump(mode="json")}
 
 
+@router.post(
+    "/api/broker/positions/{symbol}/protect-oco",
+    tags=["broker"],
+)
+def protect_position_oco(symbol: str) -> dict[str, object]:
+    """Submit broker-side OCO take-profit and stop-loss protection for a whole-share position."""
+
+    broker = get_active_alpaca_broker()
+    clock = broker.get_market_clock()
+    if not clock.is_open:
+        raise HTTPException(
+            status_code=409,
+            detail="Market is closed. Broker OCO protection is blocked from the dashboard until regular hours.",
+        )
+
+    try:
+        receipt = broker.submit_position_oco_protection(symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    record_order_receipt(receipt)
+    return {"broker": "alpaca", "mode": "active-config", "receipt": receipt.model_dump(mode="json")}
+
+
 @router.get(
     "/api/safety/status",
     response_model=AuditSummary,

@@ -232,6 +232,8 @@ class PositionProtectionPlan(BaseModel):
     suggested_stop_price: float | None = None
     suggested_take_profit_price: float | None = None
     suggested_stop_notional: float | None = None
+    broker_protection_supported: bool = False
+    protection_action: Literal["none", "app_managed", "broker_oco"] = "none"
     status: Literal["protected", "needs_review", "unprotected"]
     notes: list[str]
 

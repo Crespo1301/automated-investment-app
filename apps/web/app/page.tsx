@@ -171,6 +171,18 @@ async function sellPosition(formData: FormData) {
   await postApi(`/api/broker/positions/${encodeURIComponent(symbol)}/sell-market`);
 }
 
+async function protectPosition(formData: FormData) {
+  "use server";
+
+  const symbol = String(formData.get("symbol") || "").trim().toUpperCase();
+  const confirmation = String(formData.get("confirmation") || "").trim().toUpperCase();
+  if (!symbol || confirmation !== `PROTECT ${symbol}`) {
+    return;
+  }
+
+  await postApi(`/api/broker/positions/${encodeURIComponent(symbol)}/protect-oco`);
+}
+
 async function getReconciliation(): Promise<BrokerReconciliationSnapshot | null> {
   try {
     const response = await fetch(`${apiBaseUrl}/api/broker/reconciliation`, {
@@ -792,6 +804,18 @@ export default async function HomePage() {
                           : "pending price"}.
                       </p>
                       <p className="thesis">{plan.notes[plan.notes.length - 1]}</p>
+                      {plan.status === "unprotected" && plan.protection_action === "broker_oco" ? (
+                        <form action={protectPosition} className="inline-form">
+                          <input name="symbol" type="hidden" value={plan.symbol} />
+                          <input name="confirmation" placeholder={`PROTECT ${plan.symbol}`} />
+                          <button className="secondary-action" disabled={!marketOpen} type="submit">Protect</button>
+                        </form>
+                      ) : null}
+                      {plan.status === "unprotected" && plan.protection_action === "app_managed" ? (
+                        <p className="thesis">
+                          Broker OCO is blocked for this fractional quantity. Keep exit monitor enabled while this position is open.
+                        </p>
+                      ) : null}
                     </div>
                   ))
                 ) : (

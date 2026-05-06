@@ -384,6 +384,76 @@ class AlpacaBroker:
             raw_message=f"Alpaca accepted manual sell order with client id {client_order_id}.",
         )
 
+    def submit_position_oco_protection(self, symbol: str) -> BrokerOrderReceipt:
+        """Submit broker-side OCO take-profit and stop-loss protection for a whole-share position."""
+
+        from alpaca.trading.enums import OrderClass, OrderSide, OrderType, TimeInForce
+        from alpaca.trading.requests import (
+            LimitOrderRequest,
+            StopLossRequest,
+            TakeProfitRequest,
+        )
+
+        normalized_symbol = symbol.upper()
+        position = next(
+            (
+                broker_position
+                for broker_position in self.list_positions()
+                if broker_position.symbol.upper() == normalized_symbol
+            ),
+            None,
+        )
+        if position is None or position.quantity <= 0:
+            raise ValueError(f"No open long position found for {normalized_symbol}.")
+        if position.market_value < settings.minimum_order_notional:
+            raise ValueError(
+                f"{normalized_symbol} position value is below the ${settings.minimum_order_notional:.2f} minimum order guard."
+            )
+        if abs(position.quantity - round(position.quantity)) >= 0.000000001:
+            raise ValueError(
+                f"{normalized_symbol} has a fractional quantity. Broker OCO protection is blocked; use app-managed exits."
+            )
+        if self._has_open_sell_order(normalized_symbol):
+            raise ValueError(f"An open sell order already exists for {normalized_symbol}.")
+
+        average_entry_price = position.cost_basis / position.quantity
+        stop_price = _round_order_price(
+            average_entry_price * (1 - settings.autopilot_stop_loss_percent / 100)
+        )
+        take_profit_price = _round_order_price(
+            average_entry_price * (1 + settings.autopilot_take_profit_percent / 100)
+        )
+        if take_profit_price <= stop_price:
+            raise ValueError(f"Invalid protection prices for {normalized_symbol}.")
+
+        client_order_id = new_id(f"protective_exit_{normalized_symbol.lower()}")
+        order = self.client.submit_order(
+            order_data=LimitOrderRequest(
+                symbol=normalized_symbol,
+                qty=round(position.quantity),
+                side=OrderSide.SELL,
+                type=OrderType.LIMIT,
+                time_in_force=TimeInForce.GTC,
+                order_class=OrderClass.OCO,
+                limit_price=take_profit_price,
+                take_profit=TakeProfitRequest(limit_price=take_profit_price),
+                stop_loss=StopLossRequest(stop_price=stop_price),
+                client_order_id=client_order_id,
+            )
+        )
+        return BrokerOrderReceipt(
+            broker_order_id=str(order.id),
+            intent_id=client_order_id,
+            status=str(order.status),
+            symbol=normalized_symbol,
+            side="sell",
+            submitted_notional=position.market_value,
+            raw_message=(
+                f"Alpaca accepted OCO protection for {normalized_symbol}: "
+                f"take profit {take_profit_price}, stop {stop_price}."
+            ),
+        )
+
     def _has_open_sell_order(self, symbol: str) -> bool:
         open_statuses = {
             "accepted",
@@ -518,6 +588,12 @@ class AlpacaBroker:
         if time(16, 0) <= current_time < time(20, 0):
             return "after_hours"
         return "closed"
+
+
+def _round_order_price(price: float) -> float:
+    """Round equity order prices using Alpaca's displayed sub-penny rule."""
+
+    return round(price, 2 if price >= 1 else 4)
 
 
 def get_broker() -> LocalPaperBroker | AlpacaBroker:

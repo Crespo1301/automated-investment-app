@@ -42,8 +42,8 @@ def build_protection_plan(
         status=status,
         plans=plans,
         notes=[
-            "This is a read-only protection plan, not an executed stop order.",
-            "Add broker-backed stop or bracket orders before allowing unattended entries.",
+            "This is a read-only protection plan unless you explicitly submit broker OCO protection.",
+            "Fractional positions stay on app-managed exit monitoring because broker-side OCO protection may be rejected for fractional shares.",
         ],
     )
 
@@ -76,15 +76,21 @@ def _plan_position(
         else None
     )
     notes = [
-        "Suggested stop is a starter 2% review level, not financial advice.",
+        f"Suggested stop uses the configured {settings.autopilot_stop_loss_percent:.2f}% stop level.",
     ]
+    broker_protection_supported = _is_whole_share_position(position)
+    protection_action = "broker_oco" if broker_protection_supported else "app_managed"
 
     if open_sell_order:
-        status = "needs_review"
+        status = "protected"
+        protection_action = "none"
         notes.append("An open sell order exists. Confirm it is the intended protective exit.")
     else:
         status = "unprotected"
-        notes.append("No open sell order was found for this position.")
+        if broker_protection_supported:
+            notes.append("No open sell order was found. Broker OCO protection can be submitted after review.")
+        else:
+            notes.append("No open sell order was found. Fractional quantity uses app-managed exits until broker OCO is supported.")
 
     return PositionProtectionPlan(
         symbol=position.symbol,
@@ -95,6 +101,8 @@ def _plan_position(
         suggested_stop_price=suggested_stop_price,
         suggested_take_profit_price=suggested_take_profit_price,
         suggested_stop_notional=suggested_stop_notional,
+        broker_protection_supported=broker_protection_supported,
+        protection_action=protection_action,
         status=status,
         notes=notes,
     )
@@ -116,3 +124,7 @@ def _has_open_sell_order(symbol: str, orders: list[BrokerOrderSummary]) -> bool:
             return True
 
     return False
+
+
+def _is_whole_share_position(position: BrokerPositionSummary) -> bool:
+    return abs(position.quantity - round(position.quantity)) < 0.000000001

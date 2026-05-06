@@ -7,6 +7,7 @@ from app.services.ai_scorer import TradeScorer
 from app.services.audit_store import get_autopilot_state, get_daily_trade_recap, get_safety_state
 from app.services.autopilot import enable_autopilot, run_autopilot_once
 from app.services.broker_adapter import (
+    AlpacaBroker,
     LocalPaperBroker,
     MissingBrokerCredentialsError,
     missing_alpaca_credential_names,
@@ -860,6 +861,29 @@ def test_protection_plan_marks_open_position_without_sell_order_unprotected() ->
 
     assert plan.status == "unprotected"
     assert plan.plans[0].suggested_stop_price == 490
+    assert plan.plans[0].broker_protection_supported is False
+    assert plan.plans[0].protection_action == "app_managed"
+
+
+def test_protection_plan_marks_whole_share_position_as_broker_oco_candidate() -> None:
+    plan = build_protection_plan(
+        positions=[
+            BrokerPositionSummary(
+                symbol="SPY",
+                quantity=1,
+                market_value=500,
+                cost_basis=500,
+                unrealized_pl=0,
+                unrealized_pl_percent=0,
+                current_price=500,
+            )
+        ],
+        orders=[],
+    )
+
+    assert plan.status == "unprotected"
+    assert plan.plans[0].broker_protection_supported is True
+    assert plan.plans[0].protection_action == "broker_oco"
 
 
 def test_protection_plan_marks_position_with_open_sell_order_for_review() -> None:
@@ -887,5 +911,25 @@ def test_protection_plan_marks_position_with_open_sell_order_for_review() -> Non
         ],
     )
 
-    assert plan.status == "needs_review"
-    assert plan.plans[0].status == "needs_review"
+    assert plan.status == "ready"
+    assert plan.plans[0].status == "protected"
+    assert plan.plans[0].protection_action == "none"
+
+
+def test_broker_oco_protection_blocks_fractional_positions() -> None:
+    broker = AlpacaBroker.__new__(AlpacaBroker)
+    broker.list_positions = lambda: [
+        BrokerPositionSummary(
+            symbol="NVDA",
+            quantity=0.038244901,
+            market_value=7.88,
+            cost_basis=7.89,
+            unrealized_pl=-0.01,
+            unrealized_pl_percent=-0.001,
+            current_price=205.98,
+        )
+    ]
+    broker._has_open_sell_order = lambda symbol: False
+
+    with pytest.raises(ValueError, match="fractional quantity"):
+        broker.submit_position_oco_protection("NVDA")

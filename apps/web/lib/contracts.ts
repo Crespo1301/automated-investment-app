@@ -118,13 +118,15 @@ export type PositionProtectionPlan = {
   suggested_stop_price?: number | null;
   suggested_take_profit_price?: number | null;
   suggested_stop_notional?: number | null;
+  broker_protection_supported: boolean;
+  protection_action: "none" | "app_managed" | "broker_oco";
   status: "protected" | "needs_review" | "unprotected";
   notes: string[];
 };
 
 export type ExitSignal = {
   symbol: string;
-  reason: "stop_loss" | "take_profit";
+  reason: "stop_loss" | "small_win" | "take_profit";
   current_price: number;
   average_entry_price: number;
   trigger_price: number;
