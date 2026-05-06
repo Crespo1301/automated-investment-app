@@ -42,6 +42,7 @@ from app.services.local_worker import (
     run_single_cycle,
 )
 from app.services.protection_plan import build_protection_plan
+from app.services.readiness import get_morning_readiness
 
 
 router = APIRouter()
@@ -106,6 +107,16 @@ def trading_config() -> RiskLimits:
     """Return the active watchlist and risk limits for local trading."""
 
     return get_risk_limits()
+
+
+@router.get(
+    "/api/trading/morning-readiness",
+    tags=["trading"],
+)
+def trading_morning_readiness() -> dict[str, object]:
+    """Return the morning trading readiness checklist."""
+
+    return get_morning_readiness()
 
 
 @router.post(

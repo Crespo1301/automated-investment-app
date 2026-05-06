@@ -10,6 +10,7 @@
     "dev:autopilot": "cd apps/api && . .venv/bin/activate && python -m app.worker --autopilot-loop",
     "autopilot:once": "cd apps/api && . .venv/bin/activate && python -m app.worker --autopilot-once",
     "autopilot:status": "cd apps/api && . .venv/bin/activate && python -m app.worker --autopilot-status",
+    "morning:status": "cd apps/api && . .venv/bin/activate && python -m app.worker --morning-readiness",
     "check:api": "curl -sS http://127.0.0.1:8000/",
     "dev:web": "npm --workspace apps/web run dev",
     "build:web": "npm --workspace apps/web run build",

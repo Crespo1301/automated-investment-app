@@ -64,6 +64,13 @@ cd /home/cresp3/automated-investment-app
 npm run dev:autopilot
 ```
 
+Check readiness:
+
+```bash
+cd /home/cresp3/automated-investment-app
+npm run morning:status
+```
+
 Use `http://localhost:3000` as the main operating surface:
 
 1. Refresh broker state.
@@ -87,6 +94,15 @@ Autopilot rules:
 - the loop uses the same risk engine, duplicate-order checks, market-hours guard, and kill switch
 - the loop enables the kill switch and disables itself on runtime errors
 - use `npm run autopilot:status` and `npm run autopilot:once` for diagnostics
+
+Recommended morning modes:
+
+- **Watch Mode**: API, dashboard, and autopilot armed, with entries/exits locked.
+- **Exit-Managed Mode**: set `INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=true`, keep
+  entries locked, and observe signals before autonomous buys.
+- **Autonomous Entry Mode**: only after exit checks are verified, set both
+  `INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=true` and
+  `INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=true`, then run the autopilot loop.
 
 The dashboard Protection Plan is read-only. It checks current broker positions
 against recent orders, flags positions without open sell orders, and suggests a

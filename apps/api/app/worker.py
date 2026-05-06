@@ -23,6 +23,7 @@ from app.services.autopilot import (
     run_autopilot_once,
 )
 from app.services.local_worker import run_queue_for_open_cycle, run_single_cycle
+from app.services.readiness import get_morning_readiness
 
 
 def main() -> None:
@@ -107,6 +108,11 @@ def main() -> None:
         help="Run the supervised autopilot loop until disabled or interrupted.",
     )
     parser.add_argument(
+        "--morning-readiness",
+        action="store_true",
+        help="Show the morning trading readiness checklist.",
+    )
+    parser.add_argument(
         "--autopilot-max-ticks",
         type=int,
         default=None,
@@ -131,6 +137,7 @@ def main() -> None:
             bool(args.disable_autopilot),
             args.autopilot_once,
             args.autopilot_loop,
+            args.morning_readiness,
         ]
         if sum(bool(action) for action in selected_actions) > 1:
             parser.error("Choose only one worker action at a time.")
@@ -174,6 +181,8 @@ def main() -> None:
         elif args.autopilot_loop:
             run_autopilot_loop(max_ticks=args.autopilot_max_ticks)
             result = get_autopilot_state()
+        elif args.morning_readiness:
+            result = get_morning_readiness()
         else:
             result = run_single_cycle()
     except MissingBrokerCredentialsError as exc:

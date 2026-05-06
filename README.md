@@ -70,6 +70,12 @@ Quick API check:
 npm run check:api
 ```
 
+Morning readiness check:
+
+```bash
+npm run morning:status
+```
+
 Then open `http://localhost:3000`. If the dashboard says `Backend API offline`, the
 FastAPI process is not running on `127.0.0.1:8000`.
 
@@ -107,6 +113,16 @@ The dashboard Exit Signals panel is also read-only unless
 against `INVESTMENT_APP_AUTOPILOT_STOP_LOSS_PERCENT` and
 `INVESTMENT_APP_AUTOPILOT_TAKE_PROFIT_PERCENT`, then uses a market sell to close
 the position only when exit execution is explicitly enabled.
+
+Recommended morning modes:
+
+- **Watch Mode**: API, dashboard, and autopilot armed, with entries/exits locked.
+  Use this when validating behavior or manually queueing/running one cycle.
+- **Exit-Managed Mode**: turn on `INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=true`, keep
+  entries locked, and observe exit signals before allowing autonomous buys.
+- **Autonomous Entry Mode**: only after exit checks are verified, turn on both
+  `INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=true` and
+  `INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=true`, then run `npm run dev:autopilot`.
 
 The Live Performance panel refreshes every 15 seconds through a same-origin web
 proxy and charts local broker reconciliation history. It reflects snapshots the
