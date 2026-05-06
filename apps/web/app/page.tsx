@@ -114,10 +114,19 @@ const apiBaseUrl = process.env.INVESTMENT_WEB_API_BASE_URL ?? "http://127.0.0.1:
 async function postApi(path: string) {
   "use server";
 
-  await fetch(`${apiBaseUrl}${path}`, {
-    cache: "no-store",
-    method: "POST",
-  });
+  try {
+    const response = await fetch(`${apiBaseUrl}${path}`, {
+      cache: "no-store",
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      console.error(`Investment API request failed: ${path} returned ${response.status}`);
+    }
+  } catch (error) {
+    console.error(`Investment API request failed: ${path}`, error);
+  }
+
   revalidatePath("/");
 }
 
@@ -321,6 +330,12 @@ export default async function HomePage() {
               </div>
 
               <div className="daily-grid">
+                {!account ? (
+                  <div className="action-warning" role="status">
+                    Start the FastAPI server before using kill switch, cancel, or live-cycle actions.
+                  </div>
+                ) : null}
+
                 <div className="daily-step">
                   <span className="step-number">1</span>
                   <div>
@@ -354,12 +369,12 @@ export default async function HomePage() {
                   </div>
                   {killSwitchEnabled ? (
                     <form action={disableKillSwitch}>
-                      <button className="secondary-action" type="submit">Disable</button>
+                      <button className="secondary-action" disabled={!account} type="submit">Disable</button>
                     </form>
                   ) : (
                     <form action={enableKillSwitch} className="inline-form">
                       <input name="reason" placeholder="Pause reason" />
-                      <button className="danger-action" type="submit">Enable</button>
+                      <button className="danger-action" disabled={!account} type="submit">Enable</button>
                     </form>
                   )}
                 </div>
@@ -371,7 +386,7 @@ export default async function HomePage() {
                     <p className="thesis">Cancel all open broker orders, then refresh reconciliation.</p>
                   </div>
                   <form action={cancelOpenOrders}>
-                    <button className="danger-action" type="submit">Cancel All</button>
+                    <button className="danger-action" disabled={!account} type="submit">Cancel All</button>
                   </form>
                 </div>
 
@@ -385,7 +400,7 @@ export default async function HomePage() {
                   </div>
                   <form action={runTradingCycle} className="inline-form">
                     <input name="confirmation" placeholder="RUN LIVE" />
-                    <button className="primary-action" type="submit">Run</button>
+                    <button className="primary-action" disabled={!account} type="submit">Run</button>
                   </form>
                 </div>
               </div>

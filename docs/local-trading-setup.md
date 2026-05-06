@@ -40,6 +40,32 @@ Any key pasted into a chat, screenshot, shared document, or issue should be rota
 
 ## Safe Local Worker
 
+## Daily Dashboard Flow
+
+Start the backend first:
+
+```bash
+cd /home/cresp3/automated-investment-app
+npm run dev:api
+```
+
+In a second terminal, start the dashboard:
+
+```bash
+cd /home/cresp3/automated-investment-app
+npm run dev:web
+```
+
+Use `http://localhost:3000` as the main operating surface:
+
+1. Refresh broker state.
+2. Review open orders, positions, buying power, kill switch, and market clock.
+3. Cancel queued/open orders before placing anything new when the state is unclear.
+4. Enable the kill switch before stepping away.
+5. Type `RUN LIVE` only when intentionally running one live guarded cycle.
+
+If FastAPI is offline, the dashboard disables live actions and shows a backend warning.
+
 Run:
 
 ```bash

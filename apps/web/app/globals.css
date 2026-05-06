@@ -179,6 +179,13 @@ a {
   white-space: nowrap;
 }
 
+.primary-action:disabled,
+.secondary-action:disabled,
+.danger-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 .secondary-action:hover {
   border-color: var(--text);
 }
@@ -405,6 +412,15 @@ a {
   display: grid;
   gap: 0;
   border: 1px solid var(--line);
+}
+
+.action-warning {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  background: #fff7ed;
+  color: var(--warning);
+  font-size: 0.92rem;
+  line-height: 1.5;
 }
 
 .daily-step {

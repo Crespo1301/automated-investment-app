@@ -35,6 +35,49 @@ This scaffold includes:
 
 ## Local Development
 
+## Daily Dashboard Usage
+
+Run the app with two local servers:
+
+1. Start the FastAPI backend from `apps/api`.
+2. Start the Next.js dashboard from the repo root.
+3. Open the dashboard and use the Daily Usage panel instead of routine CLI commands.
+
+Backend:
+
+```bash
+cd /home/cresp3/automated-investment-app
+npm run dev:api
+```
+
+Dashboard:
+
+```bash
+cd /home/cresp3/automated-investment-app
+npm run dev:web
+```
+
+Quick API check:
+
+```bash
+npm run check:api
+```
+
+Then open `http://localhost:3000`. If the dashboard says `Backend API offline`, the
+FastAPI process is not running on `127.0.0.1:8000`.
+
+Daily operator flow:
+
+1. Refresh broker state.
+2. Review account value, buying power, open orders, positions, kill switch, and market clock.
+3. Cancel queued/open orders when needed before placing anything new.
+4. Enable the kill switch before stepping away or changing settings.
+5. Run one cycle only when the API is online, the market/session state is acceptable, and the confirmation field is typed exactly as `RUN LIVE`.
+
+The dashboard is an operator console, not a set-and-forget trading bot. Keep early
+live usage attended and tiny while the app is still building persistent history,
+review tools, and safer automation.
+
 ### API
 
 ```bash

@@ -6,6 +6,8 @@
     "apps/web"
   ],
   "scripts": {
+    "dev:api": "cd apps/api && . .venv/bin/activate && uvicorn app.main:app --host 127.0.0.1 --port 8000",
+    "check:api": "curl -sS http://127.0.0.1:8000/",
     "dev:web": "npm --workspace apps/web run dev",
     "build:web": "npm --workspace apps/web run build",
     "lint:web": "npm --workspace apps/web run lint",
