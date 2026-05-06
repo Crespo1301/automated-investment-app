@@ -139,8 +139,8 @@ def get_autopilot_state() -> AutopilotState:
         )
 
     state = AutopilotState.model_validate_json(path.read_text(encoding="utf-8"))
-    if state.interval_seconds <= 0:
-        state.interval_seconds = settings.autopilot_interval_seconds
+    state.interval_seconds = settings.autopilot_interval_seconds
+    state.market_open_only = settings.autopilot_market_open_only
     state.entry_execution_enabled = settings.autopilot_allow_entries
     state.exit_execution_enabled = settings.autopilot_allow_exits
     return state
@@ -163,8 +163,8 @@ def set_autopilot(
         last_heartbeat_at=previous.last_heartbeat_at,
         last_action=last_action or previous.last_action,
         last_error=last_error,
-        interval_seconds=previous.interval_seconds,
-        market_open_only=previous.market_open_only,
+        interval_seconds=settings.autopilot_interval_seconds,
+        market_open_only=settings.autopilot_market_open_only,
         entry_execution_enabled=settings.autopilot_allow_entries,
         exit_execution_enabled=settings.autopilot_allow_exits,
     )

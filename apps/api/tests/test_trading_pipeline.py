@@ -2,7 +2,7 @@ import pytest
 
 from app.core.config import configured_symbols
 from app.core.config import settings
-from app.domain.trading import MarketEvent, ScoredTradeCandidate, TradeCandidate
+from app.domain.trading import AutopilotState, MarketEvent, ScoredTradeCandidate, TradeCandidate
 from app.services.ai_scorer import TradeScorer
 from app.services.audit_store import get_autopilot_state, get_safety_state
 from app.services.autopilot import enable_autopilot, run_autopilot_once
@@ -33,6 +33,8 @@ def isolate_runtime_settings(tmp_path):
         "allow_outside_market_hours": settings.allow_outside_market_hours,
         "autopilot_allow_entries": settings.autopilot_allow_entries,
         "autopilot_allow_exits": settings.autopilot_allow_exits,
+        "autopilot_interval_seconds": settings.autopilot_interval_seconds,
+        "autopilot_market_open_only": settings.autopilot_market_open_only,
         "autopilot_stop_loss_percent": settings.autopilot_stop_loss_percent,
         "autopilot_take_profit_percent": settings.autopilot_take_profit_percent,
         "allow_demo_live_entries": settings.allow_demo_live_entries,
@@ -48,6 +50,8 @@ def isolate_runtime_settings(tmp_path):
     settings.allow_outside_market_hours = False
     settings.autopilot_allow_entries = False
     settings.autopilot_allow_exits = False
+    settings.autopilot_interval_seconds = 30
+    settings.autopilot_market_open_only = True
     settings.autopilot_stop_loss_percent = 2
     settings.autopilot_take_profit_percent = 3
     settings.allow_demo_live_entries = False
@@ -265,6 +269,20 @@ def test_autopilot_defaults_to_disabled_runtime_state() -> None:
     assert state.market_open_only is True
     assert state.entry_execution_enabled is False
     assert state.exit_execution_enabled is False
+
+
+def test_autopilot_state_syncs_interval_from_config(tmp_path) -> None:
+    settings.runtime_data_dir = str(tmp_path)
+    settings.autopilot_interval_seconds = 30
+    stale_state = AutopilotState(enabled=True, interval_seconds=300)
+    (tmp_path / "autopilot-state.json").write_text(
+        stale_state.model_dump_json(),
+        encoding="utf-8",
+    )
+
+    state = get_autopilot_state()
+
+    assert state.interval_seconds == 30
 
 
 def test_autopilot_tick_requires_live_permission_and_fails_closed() -> None:

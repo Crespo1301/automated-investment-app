@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     allow_outside_market_hours: bool = False
     duplicate_order_lookback_minutes: int = 390
     runtime_data_dir: str = ".runtime"
-    autopilot_interval_seconds: int = 60
+    autopilot_interval_seconds: int = 30
     autopilot_market_open_only: bool = True
     autopilot_allow_entries: bool = False
     autopilot_allow_exits: bool = False
