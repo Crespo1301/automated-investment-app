@@ -153,6 +153,7 @@ class AlpacaBroker:
                 continue
 
             minute_bar = getattr(snapshot, "minute_bar", None)
+            daily_bar = getattr(snapshot, "daily_bar", None)
             previous_daily_bar = getattr(snapshot, "previous_daily_bar", None)
             latest_trade = getattr(snapshot, "latest_trade", None)
             timestamp = (
@@ -179,6 +180,13 @@ class AlpacaBroker:
                     price=float(price),
                     volume=float(volume),
                     previous_close=float(previous_close),
+                    day_open=self._optional_float(getattr(daily_bar, "open", None)),
+                    day_high=self._optional_float(getattr(daily_bar, "high", None)),
+                    day_low=self._optional_float(getattr(daily_bar, "low", None)),
+                    day_volume=self._optional_float(getattr(daily_bar, "volume", None)),
+                    previous_volume=self._optional_float(
+                        getattr(previous_daily_bar, "volume", None)
+                    ),
                     timestamp=timestamp,
                     session_state=session_state,
                 )

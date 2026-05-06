@@ -7,6 +7,7 @@ from app.domain.trading import (
     RiskLimits,
     ScoredTradeCandidate,
 )
+from app.core.config import settings
 
 
 class RiskEngine:
@@ -41,7 +42,7 @@ class RiskEngine:
         if portfolio_state.trading_mode == "live" and not self.limits.allow_live_trading:
             reasons.append("Live trading is disabled by configuration.")
 
-        if scored_candidate.ai_score.score < 0.55:
+        if scored_candidate.ai_score.score < settings.ai_min_score:
             reasons.append("AI score is below the minimum approval threshold.")
 
         approved_notional = round(

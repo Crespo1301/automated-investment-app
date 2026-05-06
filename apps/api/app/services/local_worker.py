@@ -116,6 +116,9 @@ def run_single_cycle(
     strategy = MicroBreakoutStrategy(
         allowed_symbols=limits.allowed_symbols,
         proposed_notional=target_notional,
+        breakout_threshold=settings.strategy_breakout_threshold,
+        stop_loss_percent=settings.strategy_stop_loss_percent,
+        min_volume=settings.strategy_min_volume,
     )
 
     events = _get_cycle_events(event=event, broker=broker, limits=limits)

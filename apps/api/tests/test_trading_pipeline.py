@@ -18,6 +18,7 @@ from app.services.local_worker import (
 )
 from app.services.exit_monitor import evaluate_exit_signals
 from app.services.protection_plan import build_protection_plan
+from app.services.strategy_engine import MicroBreakoutStrategy
 from app.domain.trading import BrokerOrderReceipt, BrokerOrderSummary, BrokerPositionSummary
 
 
@@ -74,6 +75,36 @@ def test_starter_guardrails_match_confirmed_limits() -> None:
     assert limits.max_live_trades_per_day == 3
     assert 2 <= limits.max_daily_loss <= 2.25
     assert limits.allow_live_trading is False
+
+
+def test_aggressive_strategy_uses_range_and_volume_context() -> None:
+    strategy = MicroBreakoutStrategy(
+        allowed_symbols=["SPY"],
+        proposed_notional=2.5,
+        breakout_threshold=0.0025,
+        min_volume=25_000,
+        stop_loss_percent=0.025,
+    )
+
+    candidate = strategy.evaluate(
+        MarketEvent(
+            source="test",
+            symbol="SPY",
+            event_kind="bar",
+            price=100.30,
+            previous_close=100,
+            volume=35_000,
+            day_low=99.8,
+            day_high=100.35,
+            day_volume=40_000_000,
+            previous_volume=60_000_000,
+        )
+    )
+
+    assert candidate is not None
+    assert candidate.confidence_hint > 0.70
+    assert any("current day's range" in item for item in candidate.trigger_evidence)
+    assert any("prior session" in item for item in candidate.trigger_evidence)
 
 
 def test_local_worker_approves_demo_candidate_in_paper_mode() -> None:
@@ -367,9 +398,13 @@ def test_live_cycle_uses_real_market_data_events(monkeypatch) -> None:
                     source="alpaca-snapshot",
                     symbol="SPY",
                     event_kind="bar",
-                    price=105.0,
+                    price=104.4,
                     previous_close=104.0,
                     volume=350_000,
+                    day_low=103.5,
+                    day_high=106,
+                    day_volume=30_000_000,
+                    previous_volume=80_000_000,
                 ),
                 MarketEvent(
                     source="alpaca-snapshot",
@@ -378,6 +413,10 @@ def test_live_cycle_uses_real_market_data_events(monkeypatch) -> None:
                     price=106.0,
                     previous_close=104.0,
                     volume=400_000,
+                    day_low=103.8,
+                    day_high=106.05,
+                    day_volume=90_000_000,
+                    previous_volume=75_000_000,
                 ),
             ]
 

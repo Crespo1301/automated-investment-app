@@ -34,6 +34,11 @@ class MarketEvent(BaseModel):
     price: float
     volume: float
     previous_close: float | None = None
+    day_open: float | None = None
+    day_high: float | None = None
+    day_low: float | None = None
+    day_volume: float | None = None
+    previous_volume: float | None = None
     session_state: Literal["pre_market", "regular", "after_hours", "closed"] = "regular"
 
 

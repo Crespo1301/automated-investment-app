@@ -155,12 +155,17 @@ class TradeScorer:
 
         client = Anthropic(api_key=settings.anthropic_api_key)
         prompt = {
-            "task": "Score this candidate trade for a small autonomous trading account.",
+            "task": (
+                "Score this candidate trade for an aggressive small-account strategy "
+                "that looks for overlooked momentum, volume pressure, and range-breakout setups."
+            ),
             "rules": [
                 "Return only JSON.",
                 "Do not propose a different order size.",
                 "Do not bypass risk limits.",
                 "Score should be between 0 and 1.",
+                "Reward asymmetric upside and early momentum when evidence is strong.",
+                "Penalize stale breakouts, weak volume, bad stop distance, or vague evidence.",
             ],
             "candidate": candidate.model_dump(mode="json"),
         }
@@ -190,12 +195,17 @@ class TradeScorer:
 
         client = OpenAI(api_key=settings.openai_api_key)
         prompt = {
-            "task": "Score this candidate trade for a small autonomous trading account.",
+            "task": (
+                "Score this candidate trade for an aggressive small-account strategy "
+                "that looks for overlooked momentum, volume pressure, and range-breakout setups."
+            ),
             "rules": [
                 "Return only JSON.",
                 "Do not propose a different order size.",
                 "Do not bypass risk limits.",
                 "Score should be between 0 and 1.",
+                "Reward asymmetric upside and early momentum when evidence is strong.",
+                "Penalize stale breakouts, weak volume, bad stop distance, or vague evidence.",
             ],
             "candidate": candidate.model_dump(mode="json"),
         }
