@@ -16,6 +16,7 @@ from app.services.local_worker import (
     run_queue_for_open_cycle,
     run_single_cycle,
 )
+from app.services.exit_monitor import evaluate_exit_signals
 from app.services.protection_plan import build_protection_plan
 from app.domain.trading import BrokerOrderSummary, BrokerPositionSummary
 
@@ -27,6 +28,9 @@ def isolate_runtime_settings(tmp_path):
         "allow_live_trading": settings.allow_live_trading,
         "allow_outside_market_hours": settings.allow_outside_market_hours,
         "autopilot_allow_entries": settings.autopilot_allow_entries,
+        "autopilot_allow_exits": settings.autopilot_allow_exits,
+        "autopilot_stop_loss_percent": settings.autopilot_stop_loss_percent,
+        "autopilot_take_profit_percent": settings.autopilot_take_profit_percent,
         "alpaca_paper": settings.alpaca_paper,
         "openai_api_key": settings.openai_api_key,
         "runtime_data_dir": settings.runtime_data_dir,
@@ -35,6 +39,9 @@ def isolate_runtime_settings(tmp_path):
     settings.allow_live_trading = False
     settings.allow_outside_market_hours = False
     settings.autopilot_allow_entries = False
+    settings.autopilot_allow_exits = False
+    settings.autopilot_stop_loss_percent = 2
+    settings.autopilot_take_profit_percent = 3
     settings.alpaca_paper = True
     settings.openai_api_key = None
     settings.runtime_data_dir = str(tmp_path)
@@ -147,6 +154,8 @@ def test_autopilot_defaults_to_disabled_runtime_state() -> None:
     assert state.enabled is False
     assert state.interval_seconds == settings.autopilot_interval_seconds
     assert state.market_open_only is True
+    assert state.entry_execution_enabled is False
+    assert state.exit_execution_enabled is False
 
 
 def test_autopilot_tick_requires_live_permission_and_fails_closed() -> None:
@@ -178,6 +187,13 @@ def test_autopilot_live_tick_waits_when_entry_execution_is_locked(monkeypatch) -
         def get_market_clock(self):
             return FakeClock()
 
+        def get_reconciliation_snapshot(self, order_limit=50):
+            class Snapshot:
+                positions = []
+                orders = []
+
+            return Snapshot()
+
     monkeypatch.setattr("app.services.autopilot.get_active_alpaca_broker", lambda: FakeBroker())
 
     state = run_autopilot_once()
@@ -185,6 +201,79 @@ def test_autopilot_live_tick_waits_when_entry_execution_is_locked(monkeypatch) -
     assert state.enabled is True
     assert state.last_action is not None
     assert state.last_action.startswith("entry_execution_locked")
+
+
+def test_exit_monitor_detects_stop_loss_signal() -> None:
+    signals = evaluate_exit_signals(
+        positions=[
+            BrokerPositionSummary(
+                symbol="SPY",
+                quantity=0.01,
+                market_value=0.98,
+                cost_basis=1,
+                unrealized_pl=-0.02,
+                unrealized_pl_percent=-0.02,
+                current_price=97.5,
+            )
+        ],
+        orders=[],
+        execution_allowed=False,
+    )
+
+    assert len(signals) == 1
+    assert signals[0].reason == "stop_loss"
+    assert signals[0].execution_allowed is False
+
+
+def test_exit_monitor_detects_take_profit_signal() -> None:
+    signals = evaluate_exit_signals(
+        positions=[
+            BrokerPositionSummary(
+                symbol="SPY",
+                quantity=0.01,
+                market_value=1.04,
+                cost_basis=1,
+                unrealized_pl=0.04,
+                unrealized_pl_percent=0.04,
+                current_price=104,
+            )
+        ],
+        orders=[],
+        execution_allowed=True,
+    )
+
+    assert len(signals) == 1
+    assert signals[0].reason == "take_profit"
+    assert signals[0].execution_allowed is True
+
+
+def test_exit_monitor_skips_position_with_open_sell_order() -> None:
+    signals = evaluate_exit_signals(
+        positions=[
+            BrokerPositionSummary(
+                symbol="SPY",
+                quantity=0.01,
+                market_value=1.04,
+                cost_basis=1,
+                unrealized_pl=0.04,
+                unrealized_pl_percent=0.04,
+                current_price=104,
+            )
+        ],
+        orders=[
+            BrokerOrderSummary(
+                broker_order_id="order_1",
+                symbol="SPY",
+                side="OrderSide.SELL",
+                order_type="OrderType.MARKET",
+                status="OrderStatus.ACCEPTED",
+                filled_quantity=0,
+            )
+        ],
+        execution_allowed=True,
+    )
+
+    assert signals == []
 
 
 def test_protection_plan_marks_open_position_without_sell_order_unprotected() -> None:

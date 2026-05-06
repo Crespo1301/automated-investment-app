@@ -11,6 +11,7 @@ from app.domain.models import (
 from app.domain.trading import (
     AutopilotState,
     BrokerAccountStatus,
+    ExitCheckResult,
     PipelineRunResult,
     PerformanceHistory,
     ProtectionPlan,
@@ -28,6 +29,7 @@ from app.services.audit_store import (
     summarize_audit,
 )
 from app.services.autopilot import disable_autopilot, enable_autopilot, run_autopilot_once
+from app.services.exit_monitor import run_exit_check
 from app.services.demo_data import (
     get_dashboard_snapshot,
     get_handoff_catalog,
@@ -241,6 +243,17 @@ def risk_protection_plan() -> ProtectionPlan:
     snapshot = broker.get_reconciliation_snapshot(order_limit=50)
     record_reconciliation_snapshot(snapshot)
     return build_protection_plan(snapshot.positions, snapshot.orders)
+
+
+@router.get(
+    "/api/risk/exit-check",
+    response_model=ExitCheckResult,
+    tags=["risk"],
+)
+def risk_exit_check() -> ExitCheckResult:
+    """Return current app-managed exit signals without submitting orders."""
+
+    return run_exit_check(get_active_alpaca_broker(), execute=False)
 
 
 @router.get(

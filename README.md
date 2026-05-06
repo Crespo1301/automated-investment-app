@@ -93,13 +93,20 @@ Autopilot is now a supervised local loop:
 - `npm run dev:autopilot` must be running for scheduled checks.
 - The loop waits outside regular market hours by default.
 - Entry execution is locked by default with `INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=false`.
-- Keep that lock in place until broker-backed stop/exit orders are implemented and verified.
+- Exit execution is locked by default with `INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=false`.
+- Keep entry execution locked until exit checks have been observed and intentionally enabled.
 - The loop disables itself and enables the kill switch if a runtime error occurs.
 - Use `npm run autopilot:status` and `npm run autopilot:once` for diagnostics.
 
 The dashboard Protection Plan is read-only. It shows whether current positions
 appear to have an open sell order and suggests a starter stop review level, but
 it does not submit protective orders yet.
+
+The dashboard Exit Signals panel is also read-only unless
+`INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=true`. It checks regular-hours positions
+against `INVESTMENT_APP_AUTOPILOT_STOP_LOSS_PERCENT` and
+`INVESTMENT_APP_AUTOPILOT_TAKE_PROFIT_PERCENT`, then uses a market sell to close
+the position only when exit execution is explicitly enabled.
 
 The Live Performance panel refreshes every 15 seconds through a same-origin web
 proxy and charts local broker reconciliation history. It reflects snapshots the

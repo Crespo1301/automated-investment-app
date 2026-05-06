@@ -122,6 +122,7 @@ class AutopilotState(BaseModel):
     interval_seconds: int = 300
     market_open_only: bool = True
     entry_execution_enabled: bool = False
+    exit_execution_enabled: bool = False
 
 
 class RiskDecision(BaseModel):
@@ -213,9 +214,32 @@ class PositionProtectionPlan(BaseModel):
     quantity: float
     market_value: float
     current_price: float | None = None
+    average_entry_price: float | None = None
     suggested_stop_price: float | None = None
+    suggested_take_profit_price: float | None = None
     suggested_stop_notional: float | None = None
     status: Literal["protected", "needs_review", "unprotected"]
+    notes: list[str]
+
+
+class ExitSignal(BaseModel):
+    """Autopilot exit signal for one open position."""
+
+    symbol: str
+    reason: Literal["stop_loss", "take_profit"]
+    current_price: float
+    average_entry_price: float
+    trigger_price: float
+    quantity: float
+    market_value: float
+    execution_allowed: bool
+
+
+class ExitCheckResult(BaseModel):
+    """Read-only or executed exit-monitor result."""
+
+    signals: list[ExitSignal]
+    submitted_receipts: list[BrokerOrderReceipt]
     notes: list[str]
 
 

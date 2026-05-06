@@ -6,6 +6,7 @@ from app.domain.trading import (
     PositionProtectionPlan,
     ProtectionPlan,
 )
+from app.core.config import settings
 
 
 def build_protection_plan(
@@ -53,7 +54,22 @@ def _plan_position(
 ) -> PositionProtectionPlan:
     open_sell_order = _has_open_sell_order(position.symbol, orders)
     current_price = position.current_price
-    suggested_stop_price = round(current_price * 0.98, 2) if current_price else None
+    average_entry_price = (
+        position.cost_basis / position.quantity
+        if position.quantity > 0 and position.cost_basis > 0
+        else None
+    )
+    stop_reference = average_entry_price or current_price
+    suggested_stop_price = (
+        round(stop_reference * (1 - settings.autopilot_stop_loss_percent / 100), 2)
+        if stop_reference
+        else None
+    )
+    suggested_take_profit_price = (
+        round(stop_reference * (1 + settings.autopilot_take_profit_percent / 100), 2)
+        if stop_reference
+        else None
+    )
     suggested_stop_notional = (
         round(position.quantity * suggested_stop_price, 2)
         if suggested_stop_price is not None
@@ -75,7 +91,9 @@ def _plan_position(
         quantity=position.quantity,
         market_value=position.market_value,
         current_price=current_price,
+        average_entry_price=average_entry_price,
         suggested_stop_price=suggested_stop_price,
+        suggested_take_profit_price=suggested_take_profit_price,
         suggested_stop_notional=suggested_stop_notional,
         status=status,
         notes=notes,

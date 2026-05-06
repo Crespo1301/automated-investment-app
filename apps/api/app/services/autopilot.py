@@ -14,6 +14,7 @@ from app.services.audit_store import (
     set_kill_switch,
 )
 from app.services.broker_adapter import get_active_alpaca_broker
+from app.services.exit_monitor import run_exit_check
 from app.services.local_worker import run_single_cycle
 
 
@@ -54,6 +55,14 @@ def run_autopilot_once() -> AutopilotState:
     if state.market_open_only and not clock.is_open:
         next_open = clock.next_open.isoformat() if clock.next_open else "unknown"
         return record_autopilot_heartbeat(f"waiting_for_market_open:{next_open}")
+
+    exit_result = run_exit_check(broker, execute=settings.autopilot_allow_exits)
+    if exit_result.submitted_receipts:
+        symbols = ",".join(receipt.symbol for receipt in exit_result.submitted_receipts)
+        return record_autopilot_heartbeat(f"exit_submitted:{symbols}")
+    if exit_result.signals:
+        symbols = ",".join(f"{signal.symbol}:{signal.reason}" for signal in exit_result.signals)
+        return record_autopilot_heartbeat(f"exit_signal_locked:{symbols}")
 
     if not settings.autopilot_allow_entries:
         return record_autopilot_heartbeat(

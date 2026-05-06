@@ -5,6 +5,7 @@ import type {
   AuditSummary,
   BrokerReconciliationSnapshot,
   DashboardSnapshot,
+  ExitCheckResult,
   PipelinePreview,
   ProtectionPlan,
 } from "@/lib/contracts";
@@ -268,6 +269,22 @@ async function getProtectionPlan(): Promise<ProtectionPlan | null> {
   }
 }
 
+async function getExitCheck(): Promise<ExitCheckResult | null> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/risk/exit-check`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return response.json();
+  } catch {
+    return null;
+  }
+}
+
 function percentFormatter(value: number) {
   return `${Math.round(value * 100)}%`;
 }
@@ -287,6 +304,7 @@ export default async function HomePage() {
   const reconciliation = await getReconciliation();
   const safety = await getSafetyStatus();
   const protectionPlan = await getProtectionPlan();
+  const exitCheck = await getExitCheck();
   const account = reconciliation?.account;
   const orders = reconciliation?.orders ?? [];
   const positions = reconciliation?.positions ?? [];
@@ -636,6 +654,10 @@ export default async function HomePage() {
                   <strong>{autopilot?.entry_execution_enabled ? "enabled" : "locked"}</strong>
                 </div>
                 <div className="autopilot-row">
+                  <span>Exit execution</span>
+                  <strong>{autopilot?.exit_execution_enabled ? "enabled" : "locked"}</strong>
+                </div>
+                <div className="autopilot-row">
                   <span>Last heartbeat</span>
                   <strong>{autopilot?.last_heartbeat_at ? new Date(autopilot.last_heartbeat_at).toLocaleTimeString() : "none"}</strong>
                 </div>
@@ -704,12 +726,54 @@ export default async function HomePage() {
                         Suggested review stop:{" "}
                         {plan.suggested_stop_price ? currencyFormatter(plan.suggested_stop_price) : "pending price"}.
                       </p>
+                      <p className="thesis">
+                        Suggested take profit:{" "}
+                        {plan.suggested_take_profit_price
+                          ? currencyFormatter(plan.suggested_take_profit_price)
+                          : "pending price"}.
+                      </p>
                       <p className="thesis">{plan.notes[plan.notes.length - 1]}</p>
                     </div>
                   ))
                 ) : (
                   <div className="empty-state">
                     {protectionPlan?.notes[0] ?? "Start the API to load protection status."}
+                  </div>
+                )}
+              </div>
+            </article>
+
+            <article className="panel">
+              <div className="section-title">
+                <div>
+                  <h2>Exit Signals</h2>
+                  <p>App-managed stop-loss and take-profit checks.</p>
+                </div>
+                <span className={exitCheck?.signals.length ? "state-pill state-warning" : "state-pill state-healthy"}>
+                  {exitCheck?.signals.length ? `${exitCheck.signals.length} signal` : "clear"}
+                </span>
+              </div>
+
+              <div className="list">
+                {exitCheck && exitCheck.signals.length > 0 ? (
+                  exitCheck.signals.map((signal) => (
+                    <div className="list-item" key={`${signal.symbol}-${signal.reason}`}>
+                      <div className="row-top">
+                        <strong>{signal.symbol}</strong>
+                        <span className="state-pill state-warning">{signal.reason.replace("_", " ")}</span>
+                      </div>
+                      <p className="thesis">
+                        Current {currencyFormatter(signal.current_price)}, trigger{" "}
+                        {currencyFormatter(signal.trigger_price)}.
+                      </p>
+                      <p className="thesis">
+                        Execution {signal.execution_allowed ? "enabled" : "locked"}.
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="empty-state">
+                    {exitCheck?.notes[0] ?? "Start the API to load exit checks."}
                   </div>
                 )}
               </div>

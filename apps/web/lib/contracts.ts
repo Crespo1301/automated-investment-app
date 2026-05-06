@@ -106,6 +106,7 @@ export type AutopilotState = {
   interval_seconds: number;
   market_open_only: boolean;
   entry_execution_enabled: boolean;
+  exit_execution_enabled: boolean;
 };
 
 export type PositionProtectionPlan = {
@@ -113,9 +114,28 @@ export type PositionProtectionPlan = {
   quantity: number;
   market_value: number;
   current_price?: number | null;
+  average_entry_price?: number | null;
   suggested_stop_price?: number | null;
+  suggested_take_profit_price?: number | null;
   suggested_stop_notional?: number | null;
   status: "protected" | "needs_review" | "unprotected";
+  notes: string[];
+};
+
+export type ExitSignal = {
+  symbol: string;
+  reason: "stop_loss" | "take_profit";
+  current_price: number;
+  average_entry_price: number;
+  trigger_price: number;
+  quantity: number;
+  market_value: number;
+  execution_allowed: boolean;
+};
+
+export type ExitCheckResult = {
+  signals: ExitSignal[];
+  submitted_receipts: unknown[];
   notes: string[];
 };
 

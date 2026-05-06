@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     autopilot_interval_seconds: int = 300
     autopilot_market_open_only: bool = True
     autopilot_allow_entries: bool = False
+    autopilot_allow_exits: bool = False
+    autopilot_stop_loss_percent: float = 2.0
+    autopilot_take_profit_percent: float = 3.0
     alpaca_api_key: str | None = None
     alpaca_secret_key: str | None = None
     alpaca_paper: bool = True
