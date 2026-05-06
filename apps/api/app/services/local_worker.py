@@ -1,9 +1,16 @@
 """Local worker cycle for developing the autonomous trading loop."""
 
+from datetime import UTC, datetime
+
 from app.core.config import configured_symbols, settings
 from app.domain.trading import MarketEvent, PipelineRunResult, PortfolioState, RiskLimits
 from app.services.ai_scorer import TradeScorer
-from app.services.broker_adapter import get_alpaca_paper_broker, get_broker
+from app.services.broker_adapter import (
+    AlpacaBroker,
+    get_active_alpaca_broker,
+    get_alpaca_paper_broker,
+    get_broker,
+)
 from app.services.risk_engine import RiskEngine
 from app.services.strategy_engine import MicroBreakoutStrategy
 
@@ -33,6 +40,41 @@ def get_default_portfolio_state() -> PortfolioState:
     )
 
 
+def get_portfolio_state_from_broker(broker: AlpacaBroker) -> PortfolioState:
+    """Build the risk-gate portfolio state from the active broker snapshot."""
+
+    account = broker.get_account_status()
+    positions = broker.list_positions()
+    recent_orders = broker.list_recent_orders(limit=50)
+    today = datetime.now(UTC).date()
+    trades_today = 0
+
+    for order in recent_orders:
+        submitted_at = order.submitted_at
+        if submitted_at is None:
+            continue
+
+        if submitted_at.astimezone(UTC).date() != today:
+            continue
+
+        if order.status.lower() in {
+            "new",
+            "accepted",
+            "pending_new",
+            "partially_filled",
+            "filled",
+        }:
+            trades_today += 1
+
+    return PortfolioState(
+        open_positions=len(positions),
+        live_trades_today=trades_today,
+        realized_pnl_today=0,
+        buying_power=account.buying_power,
+        trading_mode=account.account_mode,
+    )
+
+
 def run_single_cycle(
     event: MarketEvent | None = None,
     use_alpaca_paper: bool = False,
@@ -45,7 +87,7 @@ def run_single_cycle(
 
     event = event or MarketEvent(
         source="local-demo",
-        symbol="NVDA",
+        symbol="SPY",
         event_kind="bar",
         price=105.0,
         previous_close=104.0,
@@ -71,13 +113,21 @@ def run_single_cycle(
         )
 
     scored_candidate = TradeScorer().score(candidate)
+    broker = None
+    if use_alpaca_paper:
+        broker = get_alpaca_paper_broker()
+        portfolio_state = get_portfolio_state_from_broker(broker)
+    elif settings.trading_mode == "live" and settings.allow_live_trading:
+        broker = get_active_alpaca_broker()
+        portfolio_state = get_portfolio_state_from_broker(broker)
+
     risk_decision, execution_intent = RiskEngine(limits).evaluate(
         scored_candidate,
         portfolio_state,
     )
     broker_receipt = None
     if execution_intent is not None:
-        broker = get_alpaca_paper_broker() if use_alpaca_paper else get_broker()
+        broker = broker or (get_alpaca_paper_broker() if use_alpaca_paper else get_broker())
         broker_receipt = broker.submit_order(execution_intent)
 
     return PipelineRunResult(

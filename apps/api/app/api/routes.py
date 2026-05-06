@@ -10,7 +10,7 @@ from app.domain.models import (
 )
 from app.domain.trading import BrokerAccountStatus, PipelineRunResult, RiskLimits
 from app.domain.trading import BrokerReconciliationSnapshot
-from app.services.broker_adapter import get_alpaca_paper_broker
+from app.services.broker_adapter import get_active_alpaca_broker, get_alpaca_paper_broker
 from app.services.demo_data import (
     get_dashboard_snapshot,
     get_handoff_catalog,
@@ -107,6 +107,17 @@ def alpaca_account_status() -> BrokerAccountStatus:
 
 
 @router.get(
+    "/api/broker/account",
+    response_model=BrokerAccountStatus,
+    tags=["broker"],
+)
+def active_broker_account_status() -> BrokerAccountStatus:
+    """Read-only active broker account check for the current paper/live config."""
+
+    return get_active_alpaca_broker().get_account_status()
+
+
+@router.get(
     "/api/broker/alpaca/reconciliation",
     response_model=BrokerReconciliationSnapshot,
     tags=["broker"],
@@ -115,3 +126,14 @@ def alpaca_reconciliation() -> BrokerReconciliationSnapshot:
     """Read-only Alpaca orders and positions snapshot."""
 
     return get_alpaca_paper_broker().get_reconciliation_snapshot()
+
+
+@router.get(
+    "/api/broker/reconciliation",
+    response_model=BrokerReconciliationSnapshot,
+    tags=["broker"],
+)
+def active_broker_reconciliation() -> BrokerReconciliationSnapshot:
+    """Read-only account, orders, and positions for the active paper/live config."""
+
+    return get_active_alpaca_broker().get_reconciliation_snapshot()

@@ -1,4 +1,5 @@
 from app.core.config import configured_symbols
+from app.core.config import settings
 from app.services.broker_adapter import (
     LocalPaperBroker,
     MissingBrokerCredentialsError,
@@ -12,6 +13,7 @@ def test_confirmed_watchlist_defaults_are_loaded() -> None:
 
 
 def test_starter_guardrails_match_confirmed_limits() -> None:
+    settings.allow_live_trading = False
     limits = get_risk_limits()
 
     assert limits.max_notional_per_trade == 2
@@ -22,9 +24,12 @@ def test_starter_guardrails_match_confirmed_limits() -> None:
 
 
 def test_local_worker_approves_demo_candidate_in_paper_mode() -> None:
+    settings.trading_mode = "paper"
+    settings.allow_live_trading = False
     result = run_single_cycle()
 
     assert result.candidate is not None
+    assert result.candidate.symbol == "SPY"
     assert result.risk_decision is not None
     assert result.risk_decision.state == "approved"
     assert result.execution_intent is not None
@@ -34,6 +39,8 @@ def test_local_worker_approves_demo_candidate_in_paper_mode() -> None:
 
 
 def test_local_worker_defaults_to_no_real_broker_submission() -> None:
+    settings.trading_mode = "paper"
+    settings.allow_live_trading = False
     result = run_single_cycle()
 
     assert result.broker_receipt is not None

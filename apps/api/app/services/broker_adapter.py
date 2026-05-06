@@ -1,8 +1,8 @@
 """Broker adapter layer.
 
 The local paper broker is safe for tests and demos. The Alpaca adapter is
-constructed only when credentials are present and should still be used with
-paper mode until the full reconciliation loop is complete.
+constructed only when credentials are present and can target paper or live
+depending on runtime settings.
 """
 
 from app.core.config import settings
@@ -169,6 +169,21 @@ class AlpacaBroker:
             positions=self.list_positions(),
         )
 
+    def cancel_open_orders(self) -> list[dict[str, object]]:
+        """Cancel all open orders and return a compact result list."""
+
+        responses = self.client.cancel_orders()
+        results: list[dict[str, object]] = []
+        for response in responses:
+            results.append(
+                {
+                    "id": str(getattr(response, "id", "")),
+                    "status": int(getattr(response, "status", 0)),
+                    "body": str(getattr(response, "body", "")),
+                }
+            )
+        return results
+
     def _order_to_summary(self, order: object) -> BrokerOrderSummary:
         """Normalize an Alpaca SDK order object."""
 
@@ -215,5 +230,11 @@ def get_alpaca_paper_broker() -> AlpacaBroker:
     original_paper = settings.alpaca_paper
     if not original_paper:
         raise ValueError("Refusing paper account check because Alpaca paper mode is disabled.")
+
+    return AlpacaBroker()
+
+
+def get_active_alpaca_broker() -> AlpacaBroker:
+    """Return an Alpaca broker using the repo's current paper/live settings."""
 
     return AlpacaBroker()
