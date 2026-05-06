@@ -11,9 +11,14 @@ app/domain/models.py
 app/domain/trading.py
 app/services/__init__.py
 app/services/ai_scorer.py
+app/services/audit_store.py
+app/services/autopilot.py
 app/services/broker_adapter.py
 app/services/demo_data.py
+app/services/exit_monitor.py
 app/services/local_worker.py
+app/services/protection_plan.py
+app/services/readiness.py
 app/services/risk_engine.py
 app/services/strategy_engine.py
 automated_investment_api.egg-info/PKG-INFO

@@ -54,9 +54,15 @@ def _find_blockers(clock: MarketClockStatus) -> list[str]:
         blockers.append("Regular market is currently closed.")
     if not settings.autopilot_allow_entries:
         blockers.append("Autopilot entry execution is locked.")
-    if settings.autopilot_allow_entries and not settings.allow_demo_live_entries:
-        blockers.append("Autonomous entries need real market data; synthetic demo entries are blocked.")
     if not settings.autopilot_allow_exits:
         blockers.append("Autopilot exit execution is locked.")
+    if settings.autopilot_allow_entries:
+        broker = get_active_alpaca_broker()
+        has_data, reason = broker.has_market_data_access(get_risk_limits().allowed_symbols)
+        if not has_data:
+            blockers.append(
+                "Autonomous entries cannot fetch Alpaca market data."
+                + (f" {reason}" if reason else "")
+            )
 
     return blockers

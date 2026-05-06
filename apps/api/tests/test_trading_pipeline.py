@@ -2,7 +2,7 @@ import pytest
 
 from app.core.config import configured_symbols
 from app.core.config import settings
-from app.domain.trading import TradeCandidate
+from app.domain.trading import MarketEvent, TradeCandidate
 from app.services.ai_scorer import TradeScorer
 from app.services.audit_store import get_autopilot_state, get_safety_state
 from app.services.autopilot import enable_autopilot, run_autopilot_once
@@ -18,7 +18,7 @@ from app.services.local_worker import (
 )
 from app.services.exit_monitor import evaluate_exit_signals
 from app.services.protection_plan import build_protection_plan
-from app.domain.trading import BrokerOrderSummary, BrokerPositionSummary
+from app.domain.trading import BrokerOrderReceipt, BrokerOrderSummary, BrokerPositionSummary
 
 
 @pytest.fixture(autouse=True)
@@ -224,15 +224,108 @@ def test_live_cycle_rejects_synthetic_demo_entry(monkeypatch) -> None:
         def list_recent_orders(self, limit=50):
             return []
 
+        def get_market_clock(self):
+            class FakeClock:
+                is_open = True
+                next_open = None
+
+            return FakeClock()
+
+        def has_open_duplicate_order(self, **kwargs):
+            return None
+
     monkeypatch.setattr("app.services.local_worker.get_active_alpaca_broker", lambda: FakeBroker())
 
-    result = run_single_cycle()
+    result = run_single_cycle(
+        event=MarketEvent(
+            source="local-demo",
+            symbol="SPY",
+            event_kind="bar",
+            price=105.0,
+            previous_close=104.0,
+            volume=350_000,
+        )
+    )
 
     assert result.risk_decision is not None
     assert result.risk_decision.state == "rejected"
     assert result.execution_intent is None
     assert result.broker_receipt is None
     assert any("synthetic local-demo" in reason for reason in result.risk_decision.reasons)
+
+
+def test_live_cycle_uses_real_market_data_events(monkeypatch) -> None:
+    settings.trading_mode = "live"
+    settings.allow_live_trading = True
+    settings.allow_demo_live_entries = False
+
+    class FakeAccount:
+        buying_power = 10
+        account_mode = "live"
+
+    class FakeClock:
+        is_open = True
+        next_open = None
+
+    class FakeBroker:
+        def get_account_status(self):
+            return FakeAccount()
+
+        def list_positions(self):
+            return []
+
+        def list_recent_orders(self, limit=50):
+            return []
+
+        def get_market_clock(self):
+            return FakeClock()
+
+        def has_open_duplicate_order(self, **kwargs):
+            return None
+
+        def list_watchlist_market_events(self, symbols):
+            return [
+                MarketEvent(
+                    source="alpaca-snapshot",
+                    symbol="SPY",
+                    event_kind="bar",
+                    price=105.0,
+                    previous_close=104.0,
+                    volume=350_000,
+                ),
+                MarketEvent(
+                    source="alpaca-snapshot",
+                    symbol="QQQ",
+                    event_kind="bar",
+                    price=106.0,
+                    previous_close=104.0,
+                    volume=400_000,
+                ),
+            ]
+
+        def submit_order(self, intent):
+            return BrokerOrderReceipt(
+                broker_order_id="broker_order_1",
+                intent_id=intent.intent_id,
+                status="accepted",
+                symbol=intent.symbol,
+                side=intent.side,
+                submitted_notional=intent.approved_notional,
+                raw_message="submitted",
+            )
+
+    monkeypatch.setattr("app.services.local_worker.get_active_alpaca_broker", lambda: FakeBroker())
+
+    result = run_single_cycle()
+
+    assert result.event.source == "alpaca-snapshot"
+    assert result.candidate is not None
+    assert result.candidate.symbol == "QQQ"
+    assert result.risk_decision is not None
+    assert result.risk_decision.state == "approved"
+    assert result.execution_intent is not None
+    assert result.execution_intent.symbol == "QQQ"
+    assert result.broker_receipt is not None
 
 
 def test_exit_monitor_detects_stop_loss_signal() -> None:

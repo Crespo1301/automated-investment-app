@@ -5,17 +5,19 @@ constructed only when credentials are present and can target paper or live
 depending on runtime settings.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.domain.trading import (
     BrokerAccountStatus,
-    MarketClockStatus,
     BrokerOrderReceipt,
     BrokerOrderSummary,
     BrokerPositionSummary,
     BrokerReconciliationSnapshot,
     ExecutionIntent,
+    MarketClockStatus,
+    MarketEvent,
     new_id,
 )
 
@@ -28,6 +30,10 @@ class MissingBrokerCredentialsError(RuntimeError):
         super().__init__(
             "Missing broker credentials: " + ", ".join(missing_names)
         )
+
+
+class MarketDataUnavailableError(RuntimeError):
+    """Raised when live market data could not be fetched from Alpaca."""
 
 
 def missing_alpaca_credential_names() -> list[str]:
@@ -82,12 +88,17 @@ class AlpacaBroker:
         if missing_names:
             raise MissingBrokerCredentialsError(missing_names)
 
+        from alpaca.data.historical import StockHistoricalDataClient
         from alpaca.trading.client import TradingClient
 
         self.client = TradingClient(
             settings.alpaca_api_key,
             settings.alpaca_secret_key,
             paper=settings.alpaca_paper,
+        )
+        self.data_client = StockHistoricalDataClient(
+            settings.alpaca_api_key,
+            settings.alpaca_secret_key,
         )
 
     def get_account_status(self) -> BrokerAccountStatus:
@@ -117,6 +128,80 @@ class AlpacaBroker:
             next_open=getattr(clock, "next_open", None),
             next_close=getattr(clock, "next_close", None),
         )
+
+    def list_watchlist_market_events(self, symbols: list[str]) -> list[MarketEvent]:
+        """Return normalized real market events for the configured watchlist."""
+
+        from alpaca.data.requests import StockSnapshotRequest
+
+        normalized_symbols = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
+        if not normalized_symbols:
+            return []
+
+        snapshots = self.data_client.get_stock_snapshot(
+            StockSnapshotRequest(symbol_or_symbols=normalized_symbols)
+        )
+        clock = self.get_market_clock()
+        session_state = self._resolve_session_state(clock)
+        events: list[MarketEvent] = []
+        missing_symbols: list[str] = []
+
+        for symbol in normalized_symbols:
+            snapshot = snapshots.get(symbol)
+            if snapshot is None:
+                missing_symbols.append(symbol)
+                continue
+
+            minute_bar = getattr(snapshot, "minute_bar", None)
+            previous_daily_bar = getattr(snapshot, "previous_daily_bar", None)
+            latest_trade = getattr(snapshot, "latest_trade", None)
+            timestamp = (
+                getattr(minute_bar, "timestamp", None)
+                or getattr(latest_trade, "timestamp", None)
+                or datetime.now(UTC)
+            )
+            price = (
+                getattr(minute_bar, "close", None)
+                or getattr(latest_trade, "price", None)
+            )
+            volume = getattr(minute_bar, "volume", 0) or 0
+            previous_close = getattr(previous_daily_bar, "close", None)
+
+            if price is None or previous_close is None:
+                missing_symbols.append(symbol)
+                continue
+
+            events.append(
+                MarketEvent(
+                    source="alpaca-snapshot",
+                    symbol=symbol,
+                    event_kind="bar",
+                    price=float(price),
+                    volume=float(volume),
+                    previous_close=float(previous_close),
+                    timestamp=timestamp,
+                    session_state=session_state,
+                )
+            )
+
+        if not events:
+            joined = ", ".join(missing_symbols[:5]) or "unknown symbols"
+            raise MarketDataUnavailableError(
+                "Alpaca returned no usable market snapshots for the watchlist. "
+                f"Missing or incomplete symbols: {joined}."
+            )
+
+        return events
+
+    def has_market_data_access(self, symbols: list[str]) -> tuple[bool, str | None]:
+        """Probe Alpaca market data access for readiness checks."""
+
+        try:
+            self.list_watchlist_market_events(symbols[:1])
+        except Exception as exc:
+            return False, str(exc)
+
+        return True, None
 
     def submit_order(self, intent: ExecutionIntent) -> BrokerOrderReceipt:
         """Submit an approved execution intent to Alpaca."""
@@ -300,6 +385,23 @@ class AlpacaBroker:
             return None
 
         return float(value)
+
+    def _resolve_session_state(self, clock: MarketClockStatus) -> str:
+        """Map the broker clock into the normalized market-event session state."""
+
+        if clock.is_open:
+            return "regular"
+
+        eastern_now = (clock.timestamp or datetime.now(UTC)).astimezone(
+            ZoneInfo("America/New_York")
+        )
+        current_time = eastern_now.time()
+
+        if time(4, 0) <= current_time < time(9, 30):
+            return "pre_market"
+        if time(16, 0) <= current_time < time(20, 0):
+            return "after_hours"
+        return "closed"
 
 
 def get_broker() -> LocalPaperBroker | AlpacaBroker:

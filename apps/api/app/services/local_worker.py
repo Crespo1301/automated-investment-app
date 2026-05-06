@@ -9,6 +9,7 @@ from app.domain.trading import (
     PortfolioState,
     RiskDecision,
     RiskLimits,
+    TradeCandidate,
 )
 from app.services.ai_scorer import TradeScorer
 from app.services.audit_store import get_safety_state, record_pipeline_run
@@ -95,26 +96,25 @@ def run_single_cycle(
     strategy, advisory AI score, hard risk review, and paper broker receipt.
     """
 
-    event = event or MarketEvent(
-        source="local-demo",
-        symbol="SPY",
-        event_kind="bar",
-        price=105.0,
-        previous_close=104.0,
-        volume=350_000,
-    )
-
     limits = get_risk_limits()
-    portfolio_state = get_default_portfolio_state()
     strategy = MicroBreakoutStrategy(
         allowed_symbols=limits.allowed_symbols,
         proposed_notional=limits.max_notional_per_trade,
     )
+    broker = None
+    portfolio_state = get_default_portfolio_state()
+    if use_alpaca_paper:
+        broker = get_alpaca_paper_broker()
+        portfolio_state = get_portfolio_state_from_broker(broker)
+    elif settings.trading_mode == "live" and settings.allow_live_trading:
+        broker = get_active_alpaca_broker()
+        portfolio_state = get_portfolio_state_from_broker(broker)
 
-    candidate = strategy.evaluate(event)
+    events = _get_cycle_events(event=event, broker=broker, limits=limits)
+    selected_event, candidate = _select_best_candidate(events, strategy)
     if candidate is None:
         return PipelineRunResult(
-            event=event,
+            event=selected_event,
             candidate=None,
             scored_candidate=None,
             risk_decision=None,
@@ -122,14 +122,8 @@ def run_single_cycle(
             broker_receipt=None,
         )
 
+    event = selected_event
     scored_candidate = TradeScorer().score(candidate)
-    broker = None
-    if use_alpaca_paper:
-        broker = get_alpaca_paper_broker()
-        portfolio_state = get_portfolio_state_from_broker(broker)
-    elif settings.trading_mode == "live" and settings.allow_live_trading:
-        broker = get_active_alpaca_broker()
-        portfolio_state = get_portfolio_state_from_broker(broker)
 
     risk_decision, execution_intent = RiskEngine(limits).evaluate(
         scored_candidate,
@@ -241,3 +235,62 @@ def run_queue_for_open_cycle(event: MarketEvent | None = None) -> PipelineRunRes
     """Run one guarded cycle that can queue a regular-session order for open."""
 
     return run_single_cycle(event=event, queue_for_open=True)
+
+
+def _get_cycle_events(
+    event: MarketEvent | None,
+    broker: AlpacaBroker | None,
+    limits: RiskLimits,
+) -> list[MarketEvent]:
+    """Return the market events that should be evaluated for this cycle."""
+
+    if event is not None:
+        return [event]
+
+    if broker is not None and settings.trading_mode == "live" and settings.allow_live_trading:
+        return broker.list_watchlist_market_events(limits.allowed_symbols)
+
+    return [
+        MarketEvent(
+            source="local-demo",
+            symbol="SPY",
+            event_kind="bar",
+            price=105.0,
+            previous_close=104.0,
+            volume=350_000,
+        )
+    ]
+
+
+def _select_best_candidate(
+    events: list[MarketEvent],
+    strategy: MicroBreakoutStrategy,
+) -> tuple[MarketEvent, TradeCandidate | None]:
+    """Choose the strongest candidate from the current cycle's events."""
+
+    if not events:
+        fallback_event = MarketEvent(
+            source="local-demo",
+            symbol="SPY",
+            event_kind="bar",
+            price=105.0,
+            previous_close=104.0,
+            volume=350_000,
+        )
+        return fallback_event, None
+
+    selected_event = events[0]
+    selected_candidate = None
+    for market_event in events:
+        candidate = strategy.evaluate(market_event)
+        if candidate is None:
+            continue
+
+        if (
+            selected_candidate is None
+            or candidate.confidence_hint > selected_candidate.confidence_hint
+        ):
+            selected_event = market_event
+            selected_candidate = candidate
+
+    return selected_event, selected_candidate
