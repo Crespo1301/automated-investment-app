@@ -1,10 +1,12 @@
 import { StatusCard } from "@/components/status-card";
+import { LivePerformancePanel } from "@/components/live-performance-panel";
 import { revalidatePath } from "next/cache";
 import type {
   AuditSummary,
   BrokerReconciliationSnapshot,
   DashboardSnapshot,
   PipelinePreview,
+  ProtectionPlan,
 } from "@/lib/contracts";
 
 const demoSnapshot: DashboardSnapshot = {
@@ -206,6 +208,18 @@ async function runAutopilotTick(formData: FormData) {
   await postApi("/api/autopilot/tick");
 }
 
+async function sellPosition(formData: FormData) {
+  "use server";
+
+  const symbol = String(formData.get("symbol") || "").trim().toUpperCase();
+  const confirmation = String(formData.get("confirmation") || "").trim().toUpperCase();
+  if (!symbol || confirmation !== `SELL ${symbol}`) {
+    return;
+  }
+
+  await postApi(`/api/broker/positions/${encodeURIComponent(symbol)}/sell-market`);
+}
+
 async function getReconciliation(): Promise<BrokerReconciliationSnapshot | null> {
   try {
     const response = await fetch(`${apiBaseUrl}/api/broker/reconciliation`, {
@@ -238,6 +252,22 @@ async function getSafetyStatus(): Promise<AuditSummary | null> {
   }
 }
 
+async function getProtectionPlan(): Promise<ProtectionPlan | null> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/risk/protection-plan`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return response.json();
+  } catch {
+    return null;
+  }
+}
+
 function percentFormatter(value: number) {
   return `${Math.round(value * 100)}%`;
 }
@@ -256,6 +286,7 @@ function cleanEnum(value: string) {
 export default async function HomePage() {
   const reconciliation = await getReconciliation();
   const safety = await getSafetyStatus();
+  const protectionPlan = await getProtectionPlan();
   const account = reconciliation?.account;
   const orders = reconciliation?.orders ?? [];
   const positions = reconciliation?.positions ?? [];
@@ -359,6 +390,8 @@ export default async function HomePage() {
             />
           ))}
         </section>
+
+        <LivePerformancePanel />
 
         <section className="content-grid">
           <div className="stack">
@@ -473,6 +506,7 @@ export default async function HomePage() {
                   <span>Asset</span>
                   <span>Market value</span>
                   <span>P&amp;L</span>
+                  <span>Action</span>
                 </div>
                 {positions.length > 0
                   ? positions.map((position) => (
@@ -491,6 +525,11 @@ export default async function HomePage() {
                         <span className={position.unrealized_pl >= 0 ? "positive" : "negative"}>
                           {currencyFormatter(position.unrealized_pl)}
                         </span>
+                        <form action={sellPosition} className="inline-form table-action">
+                          <input name="symbol" type="hidden" value={position.symbol} />
+                          <input name="confirmation" placeholder={`SELL ${position.symbol}`} />
+                          <button className="danger-action" disabled={!marketOpen} type="submit">Sell</button>
+                        </form>
                       </div>
                     ))
                   : demoSnapshot.positions.map((position) => (
@@ -593,6 +632,10 @@ export default async function HomePage() {
                   <strong>{autopilot?.market_open_only ? "market open only" : "all sessions"}</strong>
                 </div>
                 <div className="autopilot-row">
+                  <span>Entry execution</span>
+                  <strong>{autopilot?.entry_execution_enabled ? "enabled" : "locked"}</strong>
+                </div>
+                <div className="autopilot-row">
                   <span>Last heartbeat</span>
                   <strong>{autopilot?.last_heartbeat_at ? new Date(autopilot.last_heartbeat_at).toLocaleTimeString() : "none"}</strong>
                 </div>
@@ -628,6 +671,48 @@ export default async function HomePage() {
               <p className="thesis">
                 The dashboard arms autopilot, but the separate worker loop must be running for scheduled checks.
               </p>
+            </article>
+
+            <article className="panel">
+              <div className="section-title">
+                <div>
+                  <h2>Protection Plan</h2>
+                  <p>Read-only exit readiness before unattended entries.</p>
+                </div>
+                <span className={
+                  protectionPlan?.status === "ready"
+                    ? "state-pill state-healthy"
+                    : protectionPlan?.status === "no_positions"
+                      ? "state-pill"
+                      : "state-pill state-warning"
+                }>
+                  {protectionPlan?.status.replace("_", " ") ?? "offline"}
+                </span>
+              </div>
+
+              <div className="list">
+                {protectionPlan && protectionPlan.plans.length > 0 ? (
+                  protectionPlan.plans.map((plan) => (
+                    <div className="list-item" key={plan.symbol}>
+                      <div className="row-top">
+                        <strong>{plan.symbol}</strong>
+                        <span className={plan.status === "protected" ? "state-pill state-healthy" : "state-pill state-warning"}>
+                          {plan.status.replace("_", " ")}
+                        </span>
+                      </div>
+                      <p className="thesis">
+                        Suggested review stop:{" "}
+                        {plan.suggested_stop_price ? currencyFormatter(plan.suggested_stop_price) : "pending price"}.
+                      </p>
+                      <p className="thesis">{plan.notes[plan.notes.length - 1]}</p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="empty-state">
+                    {protectionPlan?.notes[0] ?? "Start the API to load protection status."}
+                  </div>
+                )}
+              </div>
             </article>
 
             <article className="panel">

@@ -1,6 +1,6 @@
 """API routes for the scaffolded control plane."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.domain.models import (
     DashboardSnapshot,
@@ -8,12 +8,21 @@ from app.domain.models import (
     PipelinePreview,
     SystemProfile,
 )
-from app.domain.trading import AutopilotState, BrokerAccountStatus, PipelineRunResult, RiskLimits
+from app.domain.trading import (
+    AutopilotState,
+    BrokerAccountStatus,
+    PipelineRunResult,
+    PerformanceHistory,
+    ProtectionPlan,
+    RiskLimits,
+)
 from app.domain.trading import AuditSummary, BrokerReconciliationSnapshot, SafetyState
 from app.services.broker_adapter import get_active_alpaca_broker, get_alpaca_paper_broker
 from app.services.audit_store import (
     get_autopilot_state,
+    get_performance_history,
     record_cancel_result,
+    record_order_receipt,
     record_reconciliation_snapshot,
     set_kill_switch,
     summarize_audit,
@@ -30,6 +39,7 @@ from app.services.local_worker import (
     run_queue_for_open_cycle,
     run_single_cycle,
 )
+from app.services.protection_plan import build_protection_plan
 
 
 router = APIRouter()
@@ -219,6 +229,31 @@ def active_broker_reconciliation() -> BrokerReconciliationSnapshot:
     return snapshot
 
 
+@router.get(
+    "/api/risk/protection-plan",
+    response_model=ProtectionPlan,
+    tags=["risk"],
+)
+def risk_protection_plan() -> ProtectionPlan:
+    """Return a read-only position protection plan for operator review."""
+
+    broker = get_active_alpaca_broker()
+    snapshot = broker.get_reconciliation_snapshot(order_limit=50)
+    record_reconciliation_snapshot(snapshot)
+    return build_protection_plan(snapshot.positions, snapshot.orders)
+
+
+@router.get(
+    "/api/performance/history",
+    response_model=PerformanceHistory,
+    tags=["performance"],
+)
+def performance_history() -> PerformanceHistory:
+    """Return recent local broker reconciliation history for charts."""
+
+    return get_performance_history()
+
+
 @router.post(
     "/api/broker/cancel-open-orders",
     tags=["broker"],
@@ -233,6 +268,30 @@ def cancel_open_orders() -> dict[str, object]:
     }
     record_cancel_result(result)
     return result
+
+
+@router.post(
+    "/api/broker/positions/{symbol}/sell-market",
+    tags=["broker"],
+)
+def sell_position_market(symbol: str) -> dict[str, object]:
+    """Submit a manual day market sell for an existing position."""
+
+    broker = get_active_alpaca_broker()
+    clock = broker.get_market_clock()
+    if not clock.is_open:
+        raise HTTPException(
+            status_code=409,
+            detail="Market is closed. Manual market sells are blocked from the dashboard until regular hours.",
+        )
+
+    try:
+        receipt = broker.submit_position_market_sell(symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    record_order_receipt(receipt)
+    return {"broker": "alpaca", "mode": "active-config", "receipt": receipt.model_dump(mode="json")}
 
 
 @router.get(

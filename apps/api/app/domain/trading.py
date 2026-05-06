@@ -121,6 +121,7 @@ class AutopilotState(BaseModel):
     last_error: str | None = None
     interval_seconds: int = 300
     market_open_only: bool = True
+    entry_execution_enabled: bool = False
 
 
 class RiskDecision(BaseModel):
@@ -203,6 +204,45 @@ class BrokerPositionSummary(BaseModel):
     unrealized_pl: float
     unrealized_pl_percent: float
     current_price: float | None = None
+
+
+class PositionProtectionPlan(BaseModel):
+    """Operator-facing protection status for one broker position."""
+
+    symbol: str
+    quantity: float
+    market_value: float
+    current_price: float | None = None
+    suggested_stop_price: float | None = None
+    suggested_stop_notional: float | None = None
+    status: Literal["protected", "needs_review", "unprotected"]
+    notes: list[str]
+
+
+class ProtectionPlan(BaseModel):
+    """Portfolio-level exit/protection readiness."""
+
+    status: Literal["no_positions", "ready", "needs_review", "unprotected"]
+    plans: list[PositionProtectionPlan]
+    notes: list[str]
+
+
+class PerformancePoint(BaseModel):
+    """Historical account value point for dashboard charts."""
+
+    timestamp: datetime
+    portfolio_value: float
+    buying_power: float
+    cash: float
+    open_orders: int
+    open_positions: int
+
+
+class PerformanceHistory(BaseModel):
+    """Recent local performance history from broker reconciliation snapshots."""
+
+    points: list[PerformancePoint]
+    notes: list[str]
 
 
 class BrokerReconciliationSnapshot(BaseModel):

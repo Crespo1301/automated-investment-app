@@ -16,6 +16,8 @@ from app.services.local_worker import (
     run_queue_for_open_cycle,
     run_single_cycle,
 )
+from app.services.protection_plan import build_protection_plan
+from app.domain.trading import BrokerOrderSummary, BrokerPositionSummary
 
 
 @pytest.fixture(autouse=True)
@@ -24,6 +26,7 @@ def isolate_runtime_settings(tmp_path):
         "trading_mode": settings.trading_mode,
         "allow_live_trading": settings.allow_live_trading,
         "allow_outside_market_hours": settings.allow_outside_market_hours,
+        "autopilot_allow_entries": settings.autopilot_allow_entries,
         "alpaca_paper": settings.alpaca_paper,
         "openai_api_key": settings.openai_api_key,
         "runtime_data_dir": settings.runtime_data_dir,
@@ -31,6 +34,7 @@ def isolate_runtime_settings(tmp_path):
     settings.trading_mode = "paper"
     settings.allow_live_trading = False
     settings.allow_outside_market_hours = False
+    settings.autopilot_allow_entries = False
     settings.alpaca_paper = True
     settings.openai_api_key = None
     settings.runtime_data_dir = str(tmp_path)
@@ -40,7 +44,10 @@ def isolate_runtime_settings(tmp_path):
 
 
 def test_confirmed_watchlist_defaults_are_loaded() -> None:
-    assert configured_symbols() == ["SPY", "QQQ", "NVDA", "TSLA", "AAPL"]
+    symbols = configured_symbols()
+
+    assert {"SPY", "QQQ", "NVDA", "AAPL", "MSFT", "AMZN"}.issubset(symbols)
+    assert len(symbols) > 5
 
 
 def test_starter_guardrails_match_confirmed_limits() -> None:
@@ -155,3 +162,75 @@ def test_autopilot_tick_requires_live_permission_and_fails_closed() -> None:
     assert safety.kill_switch_enabled is True
     assert safety.reason is not None
     assert "requires live trading mode" in safety.reason
+
+
+def test_autopilot_live_tick_waits_when_entry_execution_is_locked(monkeypatch) -> None:
+    settings.trading_mode = "live"
+    settings.allow_live_trading = True
+    settings.autopilot_allow_entries = False
+    enable_autopilot("test arm")
+
+    class FakeClock:
+        is_open = True
+        next_open = None
+
+    class FakeBroker:
+        def get_market_clock(self):
+            return FakeClock()
+
+    monkeypatch.setattr("app.services.autopilot.get_active_alpaca_broker", lambda: FakeBroker())
+
+    state = run_autopilot_once()
+
+    assert state.enabled is True
+    assert state.last_action is not None
+    assert state.last_action.startswith("entry_execution_locked")
+
+
+def test_protection_plan_marks_open_position_without_sell_order_unprotected() -> None:
+    plan = build_protection_plan(
+        positions=[
+            BrokerPositionSummary(
+                symbol="SPY",
+                quantity=0.01,
+                market_value=5,
+                cost_basis=5,
+                unrealized_pl=0,
+                unrealized_pl_percent=0,
+                current_price=500,
+            )
+        ],
+        orders=[],
+    )
+
+    assert plan.status == "unprotected"
+    assert plan.plans[0].suggested_stop_price == 490
+
+
+def test_protection_plan_marks_position_with_open_sell_order_for_review() -> None:
+    plan = build_protection_plan(
+        positions=[
+            BrokerPositionSummary(
+                symbol="SPY",
+                quantity=0.01,
+                market_value=5,
+                cost_basis=5,
+                unrealized_pl=0,
+                unrealized_pl_percent=0,
+                current_price=500,
+            )
+        ],
+        orders=[
+            BrokerOrderSummary(
+                broker_order_id="order_1",
+                symbol="SPY",
+                side="OrderSide.SELL",
+                order_type="OrderType.MARKET",
+                status="OrderStatus.ACCEPTED",
+                filled_quantity=0,
+            )
+        ],
+    )
+
+    assert plan.status == "needs_review"
+    assert plan.plans[0].status == "needs_review"

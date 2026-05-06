@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     runtime_data_dir: str = ".runtime"
     autopilot_interval_seconds: int = 300
     autopilot_market_open_only: bool = True
+    autopilot_allow_entries: bool = False
     alpaca_api_key: str | None = None
     alpaca_secret_key: str | None = None
     alpaca_paper: bool = True

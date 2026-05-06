@@ -55,6 +55,11 @@ def run_autopilot_once() -> AutopilotState:
         next_open = clock.next_open.isoformat() if clock.next_open else "unknown"
         return record_autopilot_heartbeat(f"waiting_for_market_open:{next_open}")
 
+    if not settings.autopilot_allow_entries:
+        return record_autopilot_heartbeat(
+            "entry_execution_locked: set INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=true after exit protection is ready"
+        )
+
     result: PipelineRunResult = run_single_cycle()
     if result.risk_decision is None:
         return record_autopilot_heartbeat("no_candidate")

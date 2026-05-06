@@ -81,6 +81,7 @@ Daily operator flow:
 4. Enable the kill switch before stepping away or changing settings.
 5. Use `Queue For Open` only when the regular market is closed and you intentionally type `QUEUE OPEN`.
 6. Use `Run One Cycle` only when the API is online, the market/session state is acceptable, and the confirmation field is typed exactly as `RUN LIVE`.
+7. Use position-level `Sell` only during regular market hours after typing `SELL SYMBOL`.
 
 The dashboard is an operator console, not a set-and-forget trading bot. Keep early
 live usage attended and tiny while the app is still building persistent history,
@@ -91,8 +92,22 @@ Autopilot is now a supervised local loop:
 - Dashboard **Enable** only arms the state after you type `ENABLE AUTO`.
 - `npm run dev:autopilot` must be running for scheduled checks.
 - The loop waits outside regular market hours by default.
+- Entry execution is locked by default with `INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=false`.
+- Keep that lock in place until broker-backed stop/exit orders are implemented and verified.
 - The loop disables itself and enables the kill switch if a runtime error occurs.
 - Use `npm run autopilot:status` and `npm run autopilot:once` for diagnostics.
+
+The dashboard Protection Plan is read-only. It shows whether current positions
+appear to have an open sell order and suggests a starter stop review level, but
+it does not submit protective orders yet.
+
+The Live Performance panel refreshes every 15 seconds through a same-origin web
+proxy and charts local broker reconciliation history. It reflects snapshots the
+app has recorded locally, not a guarantee of future returns.
+
+The watchlist is controlled by `INVESTMENT_APP_ALLOWED_SYMBOLS`. The default
+example includes broad ETFs and large liquid names, but every symbol should be
+treated as an operator-approved universe, not an automatic recommendation.
 
 `Queue For Open` does not turn on extended-hours trading. It submits the same
 regular-session day market order path through the existing risk gate while the

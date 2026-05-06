@@ -72,6 +72,7 @@ Use `http://localhost:3000` as the main operating surface:
 4. Enable the kill switch before stepping away.
 5. Type `QUEUE OPEN` only when intentionally queueing one regular-session order before market open.
 6. Type `RUN LIVE` only when intentionally running one live guarded cycle.
+7. Type `SELL SYMBOL` in a position row only when intentionally closing that position during regular market hours.
 
 If FastAPI is offline, the dashboard disables live actions and shows a backend warning.
 
@@ -80,9 +81,22 @@ Autopilot rules:
 - dashboard `Enable` only arms the state after `ENABLE AUTO`
 - `npm run dev:autopilot` must be running for scheduled checks
 - the loop waits outside regular market hours by default
+- entry execution is locked by default with `INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=false`
+- keep the entry lock until broker-backed stop/exit orders are implemented and verified
 - the loop uses the same risk engine, duplicate-order checks, market-hours guard, and kill switch
 - the loop enables the kill switch and disables itself on runtime errors
 - use `npm run autopilot:status` and `npm run autopilot:once` for diagnostics
+
+The dashboard Protection Plan is read-only. It checks current broker positions
+against recent orders, flags positions without open sell orders, and suggests a
+starter stop review level. It does not submit protective stop orders yet.
+
+The Live Performance panel refreshes every 15 seconds. It charts local broker
+reconciliation snapshots, so it becomes more useful as the dashboard, API, and
+autopilot loop record more account state throughout the day.
+
+The tradable universe is controlled by `INVESTMENT_APP_ALLOWED_SYMBOLS`. Keep the
+list to symbols you understand and are willing to let the strategy evaluate.
 
 `Queue For Open` is not an extended-hours trading feature. It keeps the normal
 regular-session market order path and uses the broker queue while regular market

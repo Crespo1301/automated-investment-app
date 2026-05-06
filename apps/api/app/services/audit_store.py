@@ -15,6 +15,8 @@ from app.domain.trading import (
     BrokerOrderReceipt,
     BrokerReconciliationSnapshot,
     MarketClockStatus,
+    PerformanceHistory,
+    PerformancePoint,
     PipelineRunResult,
     SafetyState,
 )
@@ -132,11 +134,13 @@ def get_autopilot_state() -> AutopilotState:
         return AutopilotState(
             interval_seconds=settings.autopilot_interval_seconds,
             market_open_only=settings.autopilot_market_open_only,
+            entry_execution_enabled=settings.autopilot_allow_entries,
         )
 
     state = AutopilotState.model_validate_json(path.read_text(encoding="utf-8"))
     if state.interval_seconds <= 0:
         state.interval_seconds = settings.autopilot_interval_seconds
+    state.entry_execution_enabled = settings.autopilot_allow_entries
     return state
 
 
@@ -159,6 +163,7 @@ def set_autopilot(
         last_error=last_error,
         interval_seconds=previous.interval_seconds,
         market_open_only=previous.market_open_only,
+        entry_execution_enabled=settings.autopilot_allow_entries,
     )
     autopilot_state_path().write_text(state.model_dump_json(indent=2), encoding="utf-8")
     _append_jsonl(
@@ -235,4 +240,52 @@ def summarize_audit(market_clock: MarketClockStatus | None = None) -> AuditSumma
         autopilot_state=get_autopilot_state(),
         market_clock=market_clock,
         notes=notes,
+    )
+
+
+def get_performance_history(limit: int = 80) -> PerformanceHistory:
+    """Build recent performance chart points from local reconciliation snapshots."""
+
+    snapshots = _read_jsonl("portfolio-snapshots.jsonl")[-limit:]
+    points: list[PerformancePoint] = []
+    open_statuses = {
+        "accepted",
+        "new",
+        "pending_new",
+        "partially_filled",
+        "pending_cancel",
+    }
+
+    for event in snapshots:
+        payload = event.get("payload") or {}
+        account = payload.get("account") or {}
+        orders = payload.get("orders") or []
+        positions = payload.get("positions") or []
+        created_at = event.get("created_at")
+        if not created_at:
+            continue
+
+        open_orders = 0
+        for order in orders:
+            status = str(order.get("status") or "").split(".")[-1].lower()
+            if status in open_statuses:
+                open_orders += 1
+
+        points.append(
+            PerformancePoint(
+                timestamp=datetime.fromisoformat(str(created_at)),
+                portfolio_value=float(account.get("portfolio_value") or 0),
+                buying_power=float(account.get("buying_power") or 0),
+                cash=float(account.get("cash") or 0),
+                open_orders=open_orders,
+                open_positions=len(positions),
+            )
+        )
+
+    return PerformanceHistory(
+        points=points,
+        notes=[
+            "History is built from local broker reconciliation snapshots.",
+            "Run dashboard refreshes or the autopilot loop to keep this chart current.",
+        ],
     )

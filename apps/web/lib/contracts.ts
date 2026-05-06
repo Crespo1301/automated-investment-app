@@ -105,6 +105,38 @@ export type AutopilotState = {
   last_error?: string | null;
   interval_seconds: number;
   market_open_only: boolean;
+  entry_execution_enabled: boolean;
+};
+
+export type PositionProtectionPlan = {
+  symbol: string;
+  quantity: number;
+  market_value: number;
+  current_price?: number | null;
+  suggested_stop_price?: number | null;
+  suggested_stop_notional?: number | null;
+  status: "protected" | "needs_review" | "unprotected";
+  notes: string[];
+};
+
+export type ProtectionPlan = {
+  status: "no_positions" | "ready" | "needs_review" | "unprotected";
+  plans: PositionProtectionPlan[];
+  notes: string[];
+};
+
+export type PerformancePoint = {
+  timestamp: string;
+  portfolio_value: number;
+  buying_power: number;
+  cash: number;
+  open_orders: number;
+  open_positions: number;
+};
+
+export type PerformanceHistory = {
+  points: PerformancePoint[];
+  notes: string[];
 };
 
 export type AuditSummary = {

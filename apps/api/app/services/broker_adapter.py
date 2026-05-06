@@ -237,6 +237,44 @@ class AlpacaBroker:
             )
         return results
 
+    def submit_position_market_sell(self, symbol: str) -> BrokerOrderReceipt:
+        """Submit a day market sell for the full open long position."""
+
+        from alpaca.trading.enums import OrderSide, TimeInForce
+        from alpaca.trading.requests import MarketOrderRequest
+
+        normalized_symbol = symbol.upper()
+        position = next(
+            (
+                broker_position
+                for broker_position in self.list_positions()
+                if broker_position.symbol.upper() == normalized_symbol
+            ),
+            None,
+        )
+        if position is None or position.quantity <= 0:
+            raise ValueError(f"No open long position found for {normalized_symbol}.")
+
+        client_order_id = new_id(f"manual_exit_{normalized_symbol.lower()}")
+        order = self.client.submit_order(
+            order_data=MarketOrderRequest(
+                symbol=normalized_symbol,
+                qty=position.quantity,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY,
+                client_order_id=client_order_id,
+            )
+        )
+        return BrokerOrderReceipt(
+            broker_order_id=str(order.id),
+            intent_id=client_order_id,
+            status=str(order.status),
+            symbol=normalized_symbol,
+            side="sell",
+            submitted_notional=position.market_value,
+            raw_message=f"Alpaca accepted manual sell order with client id {client_order_id}.",
+        )
+
     def _order_to_summary(self, order: object) -> BrokerOrderSummary:
         """Normalize an Alpaca SDK order object."""
 
