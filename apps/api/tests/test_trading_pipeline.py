@@ -92,7 +92,7 @@ def test_starter_guardrails_match_confirmed_limits() -> None:
 
     assert limits.target_position_percent == 0.25
     assert limits.max_open_positions == 6
-    assert limits.max_live_trades_per_day == 3
+    assert limits.max_live_trades_per_day == 4
     assert 2 <= limits.max_daily_loss <= 2.25
     assert limits.allow_live_trading is False
 
