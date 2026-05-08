@@ -343,6 +343,11 @@ export default async function HomePage() {
           value: `${orders.length}`,
           change: orders[0] ? cleanEnum(orders[0].status) : "none",
         },
+        {
+          label: "Day trades",
+          value: account.daytrade_count === null || account.daytrade_count === undefined ? "N/A" : `${account.daytrade_count}/3`,
+          change: "Alpaca rolling PDT count",
+        },
       ]
     : [
         { label: "Portfolio value", value: "Offline", change: "API not connected" },

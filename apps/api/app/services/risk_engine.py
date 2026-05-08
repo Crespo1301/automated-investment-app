@@ -33,9 +33,6 @@ class RiskEngine:
         if portfolio_state.open_positions >= self.limits.max_open_positions:
             reasons.append("Open position limit has already been reached.")
 
-        if portfolio_state.live_trades_today >= self.limits.max_live_trades_per_day:
-            reasons.append("Daily live trade count limit has already been reached.")
-
         if portfolio_state.realized_pnl_today <= -self.limits.max_daily_loss:
             reasons.append("Daily loss limit has already been reached.")
 

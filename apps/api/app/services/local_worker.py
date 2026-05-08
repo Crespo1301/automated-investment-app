@@ -31,6 +31,7 @@ def get_risk_limits() -> RiskLimits:
         target_position_percent=settings.position_size_percent,
         max_open_positions=settings.max_open_positions,
         max_live_trades_per_day=settings.max_live_trades_per_day,
+        max_day_trades_5_business_days=settings.max_day_trades_5_business_days,
         max_daily_loss=settings.max_daily_loss,
         allow_live_trading=settings.allow_live_trading,
         allow_outside_market_hours=settings.allow_outside_market_hours,
@@ -56,31 +57,10 @@ def get_portfolio_state_from_broker(broker: AlpacaBroker) -> PortfolioState:
 
     account = broker.get_account_status()
     positions = broker.list_positions()
-    recent_orders = broker.list_recent_orders(limit=50)
-    today = datetime.now(UTC).date()
-    trades_today = 0
-
-    for order in recent_orders:
-        submitted_at = order.submitted_at
-        if submitted_at is None:
-            continue
-
-        if submitted_at.astimezone(UTC).date() != today:
-            continue
-
-        status = order.status.split(".")[-1].lower()
-        if status in {
-            "new",
-            "accepted",
-            "pending_new",
-            "partially_filled",
-            "filled",
-        }:
-            trades_today += 1
-
     return PortfolioState(
         open_positions=len(positions),
-        live_trades_today=trades_today,
+        live_trades_today=0,
+        day_trades_5_business_days=_broker_day_trade_count(broker),
         realized_pnl_today=0,
         buying_power=account.buying_power,
         portfolio_value=account.portfolio_value,
@@ -343,6 +323,13 @@ def _blocked_entry_symbols(broker: AlpacaBroker | None) -> set[str]:
             blocked.add(order.symbol.upper())
 
     return blocked
+
+
+def _broker_day_trade_count(broker: AlpacaBroker | None) -> int:
+    if broker is None or not hasattr(broker, "get_day_trade_guard"):
+        return 0
+
+    return broker.get_day_trade_guard("SPY").day_trades_5_business_days
 
 
 def _duplicate_lookback_delta():

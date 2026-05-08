@@ -88,6 +88,7 @@ class PortfolioState(BaseModel):
 
     open_positions: int = 0
     live_trades_today: int = 0
+    day_trades_5_business_days: int = 0
     realized_pnl_today: float = 0
     buying_power: float = 10
     portfolio_value: float = 10
@@ -101,6 +102,7 @@ class RiskLimits(BaseModel):
     target_position_percent: float
     max_open_positions: int
     max_live_trades_per_day: int
+    max_day_trades_5_business_days: int = 3
     max_daily_loss: float
     allow_live_trading: bool
     allow_outside_market_hours: bool = False
@@ -190,6 +192,7 @@ class BrokerAccountStatus(BaseModel):
     cash: float
     portfolio_value: float
     pattern_day_trader: bool | None = None
+    daytrade_count: int | None = None
 
 
 class BrokerOrderSummary(BaseModel):
@@ -207,6 +210,27 @@ class BrokerOrderSummary(BaseModel):
     filled_average_price: float | None = None
     submitted_at: datetime | None = None
     filled_at: datetime | None = None
+
+
+class DayTradeRecord(BaseModel):
+    """One locally detected same-day round trip."""
+
+    symbol: str
+    trade_date: str
+    opened_at: datetime
+    closed_at: datetime
+
+
+class DayTradeGuardResult(BaseModel):
+    """PDT-aware guard result for an attempted sell."""
+
+    symbol: str
+    would_be_day_trade: bool
+    allowed: bool
+    day_trades_5_business_days: int
+    max_day_trades_5_business_days: int
+    records: list[DayTradeRecord]
+    reason: str
 
 
 class BrokerPositionSummary(BaseModel):

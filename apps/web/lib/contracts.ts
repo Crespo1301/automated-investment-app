@@ -50,6 +50,7 @@ export type BrokerAccountStatus = {
   cash: number;
   portfolio_value: number;
   pattern_day_trader: boolean | null;
+  daytrade_count?: number | null;
 };
 
 export type BrokerOrderSummary = {

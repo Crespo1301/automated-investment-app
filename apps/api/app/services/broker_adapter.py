@@ -15,6 +15,8 @@ from app.domain.trading import (
     BrokerOrderSummary,
     BrokerPositionSummary,
     BrokerReconciliationSnapshot,
+    DayTradeGuardResult,
+    DayTradeRecord,
     ExecutionIntent,
     MarketClockStatus,
     MarketEvent,
@@ -116,6 +118,7 @@ class AlpacaBroker:
             cash=float(account.cash),
             portfolio_value=float(account.portfolio_value),
             pattern_day_trader=bool(account.pattern_day_trader),
+            daytrade_count=_optional_int(getattr(account, "daytrade_count", None)),
         )
 
     def get_market_clock(self) -> MarketClockStatus:
@@ -255,6 +258,44 @@ class AlpacaBroker:
         request = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=limit)
         orders = self.client.get_orders(filter=request)
         return [self._order_to_summary(order) for order in orders]
+
+    def get_day_trade_guard(self, symbol: str) -> DayTradeGuardResult:
+        """Return a rolling five-business-day PDT guard for a prospective sell."""
+
+        normalized_symbol = symbol.upper()
+        orders = self.list_recent_orders(limit=100)
+        records = _detect_day_trade_records(orders)
+        account = self.client.get_account()
+        day_trade_count = _optional_int(
+            getattr(account, "daytrade_count", None)
+        )
+        if day_trade_count is None:
+            day_trade_count = len(records)
+        today = _market_date(datetime.now(UTC))
+        would_be_day_trade = _has_filled_buy_on_date(orders, normalized_symbol, today)
+        allowed = (
+            not would_be_day_trade
+            or day_trade_count < settings.max_day_trades_5_business_days
+        )
+        reason = (
+            "Sell is not a same-day round trip."
+            if not would_be_day_trade
+            else (
+                "Day trade allowed under rolling five-business-day limit."
+                if allowed
+                else "Day trade blocked to avoid exceeding the rolling five-business-day PDT limit."
+            )
+        )
+
+        return DayTradeGuardResult(
+            symbol=normalized_symbol,
+            would_be_day_trade=would_be_day_trade,
+            allowed=allowed,
+            day_trades_5_business_days=day_trade_count,
+            max_day_trades_5_business_days=settings.max_day_trades_5_business_days,
+            records=records,
+            reason=reason,
+        )
 
     def has_open_duplicate_order(
         self,
@@ -594,6 +635,95 @@ def _round_order_price(price: float) -> float:
     """Round equity order prices using Alpaca's displayed sub-penny rule."""
 
     return round(price, 2 if price >= 1 else 4)
+
+
+def _detect_day_trade_records(orders: list[BrokerOrderSummary]) -> list[DayTradeRecord]:
+    """Detect simple long-only same-symbol same-day buy/sell round trips."""
+
+    cutoff_dates = _rolling_business_dates(datetime.now(UTC), days=5)
+    filled_orders = [
+        order
+        for order in orders
+        if order.filled_quantity > 0
+        and order.filled_at is not None
+        and _market_date(order.filled_at) in cutoff_dates
+    ]
+    records: list[DayTradeRecord] = []
+    for trade_date in sorted(cutoff_dates):
+        symbols = {
+            order.symbol.upper()
+            for order in filled_orders
+            if _market_date(order.filled_at) == trade_date
+        }
+        for symbol in sorted(symbols):
+            unmatched_buys: list[BrokerOrderSummary] = []
+            day_orders = sorted(
+                [
+                    order
+                    for order in filled_orders
+                    if order.symbol.upper() == symbol
+                    and _market_date(order.filled_at) == trade_date
+                ],
+                key=lambda order: order.filled_at,
+            )
+            for order in day_orders:
+                side = order.side.split(".")[-1].lower()
+                if side == "buy":
+                    unmatched_buys.append(order)
+                    continue
+
+                if side != "sell" or not unmatched_buys:
+                    continue
+
+                opened_order = unmatched_buys.pop(0)
+                records.append(
+                    DayTradeRecord(
+                        symbol=symbol,
+                        trade_date=trade_date,
+                        opened_at=opened_order.filled_at,
+                        closed_at=order.filled_at,
+                    )
+                )
+
+    return records
+
+
+def _has_filled_buy_on_date(
+    orders: list[BrokerOrderSummary],
+    symbol: str,
+    trade_date: str,
+) -> bool:
+    return any(
+        order.symbol.upper() == symbol.upper()
+        and order.side.split(".")[-1].lower() == "buy"
+        and order.filled_quantity > 0
+        and order.filled_at is not None
+        and _market_date(order.filled_at) == trade_date
+        for order in orders
+    )
+
+
+def _rolling_business_dates(now: datetime, days: int) -> set[str]:
+    eastern_now = now.astimezone(ZoneInfo("America/New_York"))
+    dates: set[str] = set()
+    current = eastern_now.date()
+    while len(dates) < days:
+        if current.weekday() < 5:
+            dates.add(current.isoformat())
+        current = current - timedelta(days=1)
+
+    return dates
+
+
+def _market_date(timestamp: datetime) -> str:
+    return timestamp.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+
+
+def _optional_int(value: object | None) -> int | None:
+    if value is None:
+        return None
+
+    return int(value)
 
 
 def get_broker() -> LocalPaperBroker | AlpacaBroker:

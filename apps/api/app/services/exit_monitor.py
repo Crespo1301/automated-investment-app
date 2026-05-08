@@ -90,9 +90,15 @@ def run_exit_check(broker: object, *, execute: bool) -> ExitCheckResult:
         execution_allowed=execution_allowed,
     )
     submitted_receipts = []
+    blocked_reasons: list[str] = []
 
     if execution_allowed:
         for signal in signals:
+            day_trade_guard = _day_trade_guard(broker, signal.symbol)
+            if day_trade_guard is not None and not day_trade_guard.allowed:
+                blocked_reasons.append(f"{signal.symbol}: {day_trade_guard.reason}")
+                signal.execution_allowed = False
+                continue
             receipt = broker.submit_position_market_sell(signal.symbol)
             record_order_receipt(receipt)
             submitted_receipts.append(receipt)
@@ -106,6 +112,7 @@ def run_exit_check(broker: object, *, execute: bool) -> ExitCheckResult:
         notes.append("Exit execution is locked because the regular market is closed.")
     if signals and not execution_allowed:
         notes.append("Exit signal found, but execution is locked by INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=false.")
+    notes.extend(blocked_reasons)
 
     return ExitCheckResult(signals=signals, submitted_receipts=submitted_receipts, notes=notes)
 
@@ -135,3 +142,11 @@ def _market_is_open(broker: object) -> bool:
 
     clock = get_market_clock()
     return bool(getattr(clock, "is_open", False))
+
+
+def _day_trade_guard(broker: object, symbol: str):
+    get_day_trade_guard = getattr(broker, "get_day_trade_guard", None)
+    if get_day_trade_guard is None:
+        return None
+
+    return get_day_trade_guard(symbol)

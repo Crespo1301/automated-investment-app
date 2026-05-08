@@ -1,8 +1,17 @@
+from datetime import UTC, datetime, time
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from app.core.config import configured_symbols
 from app.core.config import settings
-from app.domain.trading import AutopilotState, MarketEvent, ScoredTradeCandidate, TradeCandidate
+from app.domain.trading import (
+    AutopilotState,
+    DayTradeGuardResult,
+    MarketEvent,
+    ScoredTradeCandidate,
+    TradeCandidate,
+)
 from app.services.ai_scorer import TradeScorer
 from app.services.audit_store import get_autopilot_state, get_daily_trade_recap, get_safety_state
 from app.services.autopilot import enable_autopilot, run_autopilot_once
@@ -10,6 +19,7 @@ from app.services.broker_adapter import (
     AlpacaBroker,
     LocalPaperBroker,
     MissingBrokerCredentialsError,
+    _detect_day_trade_records,
     missing_alpaca_credential_names,
 )
 from app.services.local_worker import (
@@ -41,6 +51,7 @@ def isolate_runtime_settings(tmp_path):
         "autopilot_stop_loss_percent": settings.autopilot_stop_loss_percent,
         "autopilot_take_profit_percent": settings.autopilot_take_profit_percent,
         "minimum_order_notional": settings.minimum_order_notional,
+        "max_day_trades_5_business_days": settings.max_day_trades_5_business_days,
         "strategy_breakout_threshold": settings.strategy_breakout_threshold,
         "strategy_min_volume": settings.strategy_min_volume,
         "strategy_stop_loss_percent": settings.strategy_stop_loss_percent,
@@ -65,6 +76,7 @@ def isolate_runtime_settings(tmp_path):
     settings.autopilot_stop_loss_percent = 2
     settings.autopilot_take_profit_percent = 3
     settings.minimum_order_notional = 1
+    settings.max_day_trades_5_business_days = 3
     settings.strategy_breakout_threshold = 0.0025
     settings.strategy_min_volume = 25_000
     settings.strategy_stop_loss_percent = 0.025
@@ -93,6 +105,7 @@ def test_starter_guardrails_match_confirmed_limits() -> None:
     assert limits.target_position_percent == 0.25
     assert limits.max_open_positions == 6
     assert limits.max_live_trades_per_day == 4
+    assert limits.max_day_trades_5_business_days == 3
     assert 2 <= limits.max_daily_loss <= 2.25
     assert limits.allow_live_trading is False
 
@@ -245,6 +258,54 @@ def test_missing_alpaca_credentials_reports_env_names() -> None:
 
     assert "INVESTMENT_APP_ALPACA_API_KEY" in error.missing_names
     assert "INVESTMENT_APP_ALPACA_SECRET_KEY" in error.missing_names
+
+
+def test_day_trade_detection_respects_order_sequence() -> None:
+    market_date = datetime.now(UTC).astimezone(ZoneInfo("America/New_York")).date()
+    eastern = ZoneInfo("America/New_York")
+    today = datetime.combine(market_date, time(10, 0), tzinfo=eastern).astimezone(UTC)
+    orders = [
+        BrokerOrderSummary(
+            broker_order_id="nvda_sell",
+            symbol="NVDA",
+            side="OrderSide.SELL",
+            order_type="OrderType.MARKET",
+            status="OrderStatus.FILLED",
+            filled_quantity=0.01,
+            filled_at=today,
+        ),
+        BrokerOrderSummary(
+            broker_order_id="nvda_buy",
+            symbol="NVDA",
+            side="OrderSide.BUY",
+            order_type="OrderType.MARKET",
+            status="OrderStatus.FILLED",
+            filled_quantity=0.01,
+            filled_at=today.replace(hour=16),
+        ),
+        BrokerOrderSummary(
+            broker_order_id="spy_buy",
+            symbol="SPY",
+            side="OrderSide.BUY",
+            order_type="OrderType.MARKET",
+            status="OrderStatus.FILLED",
+            filled_quantity=0.01,
+            filled_at=today.replace(hour=17),
+        ),
+        BrokerOrderSummary(
+            broker_order_id="spy_sell",
+            symbol="SPY",
+            side="OrderSide.SELL",
+            order_type="OrderType.MARKET",
+            status="OrderStatus.FILLED",
+            filled_quantity=0.01,
+            filled_at=today.replace(hour=18),
+        ),
+    ]
+
+    records = _detect_day_trade_records(orders)
+
+    assert [record.symbol for record in records] == ["SPY"]
 
 
 def test_local_heuristic_score_is_bounded_and_explainable() -> None:
@@ -599,6 +660,86 @@ def test_live_cycle_uses_real_market_data_events(monkeypatch) -> None:
     assert result.broker_receipt is not None
 
 
+def test_live_cycle_does_not_block_normal_buys_after_four_orders(monkeypatch) -> None:
+    settings.trading_mode = "live"
+    settings.allow_live_trading = True
+    settings.allow_demo_live_entries = False
+
+    class FakeAccount:
+        buying_power = 10
+        portfolio_value = 10
+        account_mode = "live"
+
+    class FakeClock:
+        is_open = True
+        next_open = None
+
+    class FakeBroker:
+        def get_account_status(self):
+            return FakeAccount()
+
+        def list_positions(self):
+            return []
+
+        def list_recent_orders(self, limit=50):
+            now = datetime.now(UTC)
+            return [
+                BrokerOrderSummary(
+                    broker_order_id=f"order_{index}",
+                    symbol=symbol,
+                    side="OrderSide.BUY",
+                    order_type="OrderType.MARKET",
+                    status="OrderStatus.FILLED",
+                    submitted_notional=2,
+                    filled_quantity=0.01,
+                    submitted_at=now,
+                    filled_at=now,
+                )
+                for index, symbol in enumerate(["SPY", "NVDA", "AAPL", "COST"], start=1)
+            ]
+
+        def get_market_clock(self):
+            return FakeClock()
+
+        def has_open_duplicate_order(self, **kwargs):
+            return None
+
+        def list_watchlist_market_events(self, symbols):
+            return [
+                MarketEvent(
+                    source="alpaca-snapshot",
+                    symbol="AMZN",
+                    event_kind="bar",
+                    price=230,
+                    previous_close=226,
+                    volume=50_000,
+                    opening_range_high=228,
+                    recent_volume=60_000,
+                    average_recent_volume=6_000,
+                )
+            ]
+
+        def submit_order(self, intent):
+            return BrokerOrderReceipt(
+                broker_order_id="broker_order_1",
+                intent_id=intent.intent_id,
+                status="accepted",
+                symbol=intent.symbol,
+                side=intent.side,
+                submitted_notional=intent.approved_notional,
+                raw_message="submitted",
+            )
+
+    monkeypatch.setattr("app.services.local_worker.get_active_alpaca_broker", lambda: FakeBroker())
+
+    result = run_single_cycle()
+
+    assert result.risk_decision is not None
+    assert result.risk_decision.state == "approved"
+    assert result.execution_intent is not None
+    assert result.execution_intent.symbol == "AMZN"
+
+
 def test_live_cycle_skips_existing_position_symbol(monkeypatch) -> None:
     settings.trading_mode = "live"
     settings.allow_live_trading = True
@@ -919,6 +1060,68 @@ def test_exit_check_does_not_execute_when_market_is_closed() -> None:
     assert result.signals
     assert result.submitted_receipts == []
     assert any("regular market is closed" in note for note in result.notes)
+
+
+def test_exit_check_blocks_fourth_rolling_day_trade() -> None:
+    from app.domain.trading import BrokerAccountStatus, BrokerReconciliationSnapshot, MarketClockStatus
+    from app.services.exit_monitor import run_exit_check
+
+    class FakeBroker:
+        submitted = False
+
+        def get_market_clock(self):
+            return MarketClockStatus(is_open=True)
+
+        def get_day_trade_guard(self, symbol):
+            return DayTradeGuardResult(
+                symbol=symbol,
+                would_be_day_trade=True,
+                allowed=False,
+                day_trades_5_business_days=3,
+                max_day_trades_5_business_days=3,
+                records=[],
+                reason="Day trade blocked to avoid exceeding the rolling five-business-day PDT limit.",
+            )
+
+        def get_reconciliation_snapshot(self, order_limit=50):
+            return BrokerReconciliationSnapshot(
+                account=BrokerAccountStatus(
+                    broker="test",
+                    account_mode="live",
+                    account_id_hint="local",
+                    status="active",
+                    currency="USD",
+                    buying_power=10,
+                    cash=10,
+                    portfolio_value=10,
+                ),
+                orders=[],
+                positions=[
+                    BrokerPositionSummary(
+                        symbol="AAPL",
+                        quantity=0.01,
+                        market_value=3,
+                        cost_basis=2.9,
+                        unrealized_pl=0.1,
+                        unrealized_pl_percent=0.03,
+                        current_price=300,
+                    )
+                ],
+            )
+
+        def submit_position_market_sell(self, symbol):
+            self.submitted = True
+            raise AssertionError("sell should be blocked by PDT guard")
+
+    settings.autopilot_allow_exits = True
+    broker = FakeBroker()
+
+    result = run_exit_check(broker, execute=True)
+
+    assert broker.submitted is False
+    assert result.submitted_receipts == []
+    assert result.signals[0].execution_allowed is False
+    assert any("PDT limit" in note for note in result.notes)
 
 
 def test_protection_plan_marks_open_position_without_sell_order_unprotected() -> None:
