@@ -168,6 +168,11 @@ and positive headlines improve fallback conviction. Scores are still capped
 because the local layer is a bounded bridge for tiny attended live tests, not
 a fully informed trading model.
 
+The risk gate also blocks new entries when a candidate's quoted spread exceeds
+`INVESTMENT_APP_MAX_ENTRY_SPREAD_BPS` (default `75`). This keeps the small-win
+strategy from buying into obvious friction where the spread alone can consume a
+1.5-3% daily target.
+
 The watchlist is controlled by `INVESTMENT_APP_ALLOWED_SYMBOLS`. The default
 example includes broad ETFs and large liquid names, but every symbol should be
 treated as an operator-approved universe, not an automatic recommendation.

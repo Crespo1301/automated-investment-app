@@ -56,6 +56,7 @@ def isolate_runtime_settings(tmp_path):
         "strategy_min_volume": settings.strategy_min_volume,
         "strategy_stop_loss_percent": settings.strategy_stop_loss_percent,
         "ai_min_score": settings.ai_min_score,
+        "max_entry_spread_bps": settings.max_entry_spread_bps,
         "allow_demo_live_entries": settings.allow_demo_live_entries,
         "alpaca_paper": settings.alpaca_paper,
         "duplicate_order_lookback_minutes": settings.duplicate_order_lookback_minutes,
@@ -81,6 +82,7 @@ def isolate_runtime_settings(tmp_path):
     settings.strategy_min_volume = 25_000
     settings.strategy_stop_loss_percent = 0.025
     settings.ai_min_score = 0.55
+    settings.max_entry_spread_bps = 75
     settings.allow_demo_live_entries = False
     settings.alpaca_paper = True
     settings.duplicate_order_lookback_minutes = 390
@@ -938,6 +940,71 @@ def test_live_cycle_uses_real_market_data_events(monkeypatch) -> None:
     assert result.execution_intent.symbol == "QQQ"
     assert result.execution_intent.approved_notional == 2.5
     assert result.broker_receipt is not None
+
+
+def test_live_cycle_rejects_extreme_entry_spread(monkeypatch) -> None:
+    settings.trading_mode = "live"
+    settings.allow_live_trading = True
+    settings.allow_demo_live_entries = False
+    settings.max_entry_spread_bps = 75
+
+    class FakeAccount:
+        buying_power = 10
+        portfolio_value = 10
+        account_mode = "live"
+
+    class FakeClock:
+        is_open = True
+        next_open = None
+
+    class FakeBroker:
+        def get_account_status(self):
+            return FakeAccount()
+
+        def list_positions(self):
+            return []
+
+        def list_recent_orders(self, limit=50):
+            return []
+
+        def get_market_clock(self):
+            return FakeClock()
+
+        def has_open_duplicate_order(self, **kwargs):
+            return None
+
+        def list_watchlist_market_events(self, symbols):
+            return [
+                MarketEvent(
+                    source="alpaca-snapshot",
+                    symbol="WMT",
+                    event_kind="bar",
+                    price=131.05,
+                    previous_close=130.24,
+                    volume=50_000,
+                    recent_high=131.06,
+                    recent_low=130.28,
+                    vwap=130.78,
+                    recent_volume=60_000,
+                    average_recent_volume=6_000,
+                    spread_bps=480.2,
+                    market_regime="risk_on",
+                )
+            ]
+
+        def submit_order(self, intent):
+            raise AssertionError("wide-spread entries should not reach broker submission")
+
+    monkeypatch.setattr("app.services.local_worker.get_active_alpaca_broker", lambda: FakeBroker())
+
+    result = run_single_cycle()
+
+    assert result.candidate is not None
+    assert result.risk_decision is not None
+    assert result.risk_decision.state == "rejected"
+    assert result.execution_intent is None
+    assert result.broker_receipt is None
+    assert any("spread" in reason.lower() for reason in result.risk_decision.reasons)
 
 
 def test_live_cycle_does_not_block_normal_buys_after_four_orders(monkeypatch) -> None:

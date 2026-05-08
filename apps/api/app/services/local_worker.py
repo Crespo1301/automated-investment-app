@@ -32,6 +32,7 @@ def get_risk_limits() -> RiskLimits:
         max_open_positions=settings.max_open_positions,
         max_day_trades_5_business_days=settings.max_day_trades_5_business_days,
         max_daily_loss=settings.max_daily_loss,
+        max_entry_spread_bps=settings.max_entry_spread_bps,
         allow_live_trading=settings.allow_live_trading,
         allow_outside_market_hours=settings.allow_outside_market_hours,
         duplicate_order_lookback_minutes=settings.duplicate_order_lookback_minutes,

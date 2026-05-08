@@ -135,6 +135,7 @@ class RiskLimits(BaseModel):
     max_open_positions: int
     max_day_trades_5_business_days: int = 3
     max_daily_loss: float
+    max_entry_spread_bps: float = 75.0
     allow_live_trading: bool
     allow_outside_market_hours: bool = False
     duplicate_order_lookback_minutes: int = 390

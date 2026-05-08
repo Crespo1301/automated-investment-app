@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     strategy_min_volume: float = 25_000
     strategy_stop_loss_percent: float = 0.025
     ai_min_score: float = 0.55
+    max_entry_spread_bps: float = 75.0
     allow_live_trading: bool = False
     allow_outside_market_hours: bool = False
     duplicate_order_lookback_minutes: int = 390

@@ -42,6 +42,14 @@ class RiskEngine:
         if scored_candidate.ai_score.score < settings.ai_min_score:
             reasons.append("AI score is below the minimum approval threshold.")
 
+        if (
+            candidate.spread_bps is not None
+            and candidate.spread_bps > self.limits.max_entry_spread_bps
+        ):
+            reasons.append(
+                f"Quote spread {candidate.spread_bps:.1f} bps exceeds the {self.limits.max_entry_spread_bps:.1f} bps entry limit."
+            )
+
         approved_notional = round(
             min(candidate.proposed_notional, portfolio_state.buying_power),
             2,
