@@ -10,16 +10,33 @@ Repo role: internal investment and trading scaffold, lower weekly priority than 
 
 ## Claude Role Here
 
-- Use Claude for architecture, operator UX, naming, and planning only when this repo is the explicit target.
+- Use Claude for architecture, operator UX, visual systems, data visualization, naming, and planning only when this repo is the explicit target.
 - Let Codex handle implementation, test passes, repo organization, and GitHub closeout.
+- When taking over from Codex, preserve server actions, typed confirmation fields, kill-switch behavior, PDT guard copy, and route-level data fetching.
 
 ## Working Notes
 
 - API runs from `apps/api`.
 - Web dashboard runs from `apps/web`.
-- Alpaca verification and funding do not change the live-trading rule by themselves.
-- Live trading stays disabled unless explicitly approved and deliberately enabled.
-- Treat this repo as paper-first until reconciliation, kill switch coverage, and first-live-order review are in place.
+- The app has been tested with tiny live Alpaca orders. Treat every execution path as real-money sensitive.
+- Paid Claude/OpenAI API quota may be unavailable. The deterministic fallback scorer is expected to carry the system until provider funding is available.
+- The dashboard is now route-based: `/`, `/portfolio`, `/strategies`, `/risk`, `/orders`, and `/settings`.
+- Claude design passes should make these surfaces feel like a serious broker/operator console while keeping warnings, confirmations, and safety language visible.
+
+## Current Scoring Posture
+
+- Scoring priority is Claude API, then OpenAI API, then deterministic local fallback.
+- The local fallback blends strategy prior, confidence hint, trigger evidence quality, setup structure, and stop distance.
+- Local fallback scores are capped because they do not include news, spread, volatility regime, order-book depth, or broader market confirmation.
+- Do not remove deterministic explanations. Improve visual presentation without hiding why a trade was approved or rejected.
+
+## Next Claude Design Pass
+
+- Start with `/portfolio`, `/strategies`, `/risk`, `/orders`, and `/settings`; these are intentionally scaffolded for design takeover.
+- Improve visual hierarchy, charts, tables, and broker-console polish without changing server actions or route data contracts.
+- Add richer explanatory visuals for compounding scenarios, strategy funnel, provider usage, PDT posture, and exit readiness.
+- Keep all projections labeled as scenario frameworks, not promises.
+- After Claude changes, Codex should run backend tests, web build, review the diff, and handle commit/push/release.
 
 ## Useful Commands
 

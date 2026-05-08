@@ -104,7 +104,6 @@ def test_starter_guardrails_match_confirmed_limits() -> None:
 
     assert limits.target_position_percent == 0.25
     assert limits.max_open_positions == 6
-    assert limits.max_live_trades_per_day == 4
     assert limits.max_day_trades_5_business_days == 3
     assert 2 <= limits.max_daily_loss <= 2.25
     assert limits.allow_live_trading is False
@@ -238,7 +237,7 @@ def test_daily_recap_counts_strategy_and_provider_usage() -> None:
     assert recap.candidate_count == 1
     assert recap.approved_count == 1
     assert recap.submitted_orders == 1
-    assert any(provider.provider == "local-manual" for provider in recap.provider_usage)
+    assert any(provider.provider == "local" for provider in recap.provider_usage)
     assert any(strategy.strategy_id == "micro_breakout_v1" for strategy in recap.strategy_usage)
 
 
@@ -328,9 +327,187 @@ def test_local_heuristic_score_is_bounded_and_explainable() -> None:
     scored = TradeScorer().score(candidate)
 
     assert scored.ai_score.model_name == "local-manual"
-    assert 0.55 <= scored.ai_score.score <= 0.82
-    assert "Local heuristic blended" in scored.ai_score.summary
-    assert any("Fallback score is capped" in concern for concern in scored.ai_score.concerns)
+    assert 0.55 <= scored.ai_score.score <= 0.88
+    assert "Local fallback blended" in scored.ai_score.summary
+    assert any("Fallback score is capped at 0.88" in concern for concern in scored.ai_score.concerns)
+
+
+def test_local_heuristic_negation_does_not_reward_phrases() -> None:
+    """Negation tokens before a positive keyword should flip the contribution.
+
+    Without negation handling, "price lost VWAP" would still earn the VWAP
+    setup credit because the substring appears. Verify the post-fix scorer
+    rates a negated phrase strictly worse than the positive form.
+    """
+
+    positive = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="vwap_reclaim_v1",
+        symbol="SPY",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=105,
+        proposed_stop=103.42,
+        trigger_evidence=[
+            "Price reclaimed VWAP cleanly.",
+            "Recent volume is 1.80x the recent average.",
+        ],
+        confidence_hint=0.74,
+    )
+    negated = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="vwap_reclaim_v1",
+        symbol="SPY",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=105,
+        proposed_stop=103.42,
+        trigger_evidence=[
+            "Price lost VWAP cleanly.",
+            "Recent volume is 1.80x the recent average.",
+        ],
+        confidence_hint=0.74,
+    )
+
+    positive_score = TradeScorer().score(positive).ai_score.score
+    negated_score = TradeScorer().score(negated).ai_score.score
+    assert positive_score > negated_score
+
+
+def test_local_heuristic_caps_unknown_strategy_harder() -> None:
+    """A strategy without a registered prior must be capped tighter than 0.88
+    so a brand-new lane can't ride alongside calibrated lanes on day one."""
+
+    candidate = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="brand_new_lane_v0",
+        symbol="SPY",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=105,
+        proposed_stop=103.95,
+        trigger_evidence=[
+            "Price broke opening range high by 0.42%.",
+            "Recent volume is 2.40x the recent average.",
+            "Price is 1.20% above previous close.",
+        ],
+        confidence_hint=0.95,
+    )
+
+    scored = TradeScorer().score(candidate).ai_score
+    assert scored.score <= 0.70 + 1e-9
+    assert any("no registered prior" in concern for concern in scored.concerns)
+
+
+def test_local_heuristic_surfaces_raw_score_when_cap_binds() -> None:
+    """When the heuristic raw score would exceed the cap, surface the raw
+    value as a binding-constraint concern so the operator sees the cap as
+    the actual decision boundary, not background noise."""
+
+    candidate = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="opening_range_breakout_v1",
+        symbol="AAPL",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=290,
+        proposed_stop=287.5,
+        trigger_evidence=[
+            "Price broke opening range high by 0.42%.",
+            "Price is 1.20% above previous close.",
+            "Recent volume is 2.40x the recent average.",
+            "VWAP held through the pullback.",
+            "Volume pressure stayed bid-side after the break.",
+        ],
+        confidence_hint=0.95,
+    )
+
+    scored = TradeScorer().score(candidate).ai_score
+    assert scored.raw_score is not None
+    if scored.raw_score > 0.88:
+        assert any("binding constraint" in concern for concern in scored.concerns)
+    assert scored.score <= 0.88
+
+
+def test_local_heuristic_provenance_is_local() -> None:
+    candidate = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="micro_breakout_v1",
+        symbol="SPY",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=105,
+        proposed_stop=103.42,
+        trigger_evidence=["Price moved above previous close."],
+        confidence_hint=0.74,
+    )
+
+    scored = TradeScorer().score(candidate).ai_score
+    assert scored.score_provenance == "local"
+
+
+def test_local_heuristic_rewards_favorable_risk_reward() -> None:
+    base = {
+        "correlation_id": "evt_test",
+        "strategy_id": "opening_range_breakout_v1",
+        "symbol": "AAPL",
+        "side": "buy",
+        "proposed_notional": 2,
+        "proposed_entry": 100,
+        "proposed_stop": 98,
+        "trigger_evidence": [
+            "Price broke opening range high by 0.42%.",
+            "Recent volume is 2.40x the recent average.",
+            "Price is 1.20% above previous close.",
+        ],
+        "confidence_hint": 0.82,
+    }
+    poor_rr = TradeCandidate(**base, proposed_take_profit=101)
+    strong_rr = TradeCandidate(**base, proposed_take_profit=105)
+
+    poor_score = TradeScorer().score(poor_rr).ai_score.score
+    strong_score = TradeScorer().score(strong_rr).ai_score.score
+
+    assert strong_score > poor_score
+
+
+def test_local_heuristic_rewards_stronger_setup_evidence() -> None:
+    weak_candidate = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="micro_breakout_v1",
+        symbol="SPY",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=105,
+        proposed_stop=103.42,
+        trigger_evidence=[
+            "Price moved above previous close.",
+            "Day range position was unavailable from the market snapshot.",
+        ],
+        confidence_hint=0.70,
+    )
+    strong_candidate = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="opening_range_breakout_v1",
+        symbol="AAPL",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=290,
+        proposed_stop=284.2,
+        trigger_evidence=[
+            "Price broke opening range high by 0.42%.",
+            "Price is 1.20% above previous close.",
+            "Recent volume is 2.40x the recent average.",
+            "Candidate created by opening range breakout lane.",
+        ],
+        confidence_hint=0.82,
+    )
+
+    weak_score = TradeScorer().score(weak_candidate).ai_score.score
+    strong_score = TradeScorer().score(strong_candidate).ai_score.score
+
+    assert strong_score > weak_score
+    assert strong_score >= 0.75
 
 
 def test_trade_scorer_falls_back_from_claude_to_openai(monkeypatch) -> None:

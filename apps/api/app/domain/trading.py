@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 TradingMode = Literal["paper", "live"]
 TradeSide = Literal["buy", "sell"]
 RiskState = Literal["approved", "rejected"]
+ScoreProvenance = Literal["anthropic", "openai", "local"]
 
 
 def new_id(prefix: str) -> str:
@@ -61,6 +62,7 @@ class TradeCandidate(BaseModel):
     proposed_notional: float
     proposed_entry: float
     proposed_stop: float
+    proposed_take_profit: float | None = None
     trigger_evidence: list[str]
     confidence_hint: float = Field(ge=0, le=1)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -73,6 +75,13 @@ class AIScore(BaseModel):
     score: float = Field(ge=0, le=1)
     summary: str
     concerns: list[str]
+    # Tier label for downstream grouping (recap, dashboard provider posture)
+    # without parsing model_name strings. Defaults to "local" so the
+    # deterministic fallback path needs no touch.
+    score_provenance: ScoreProvenance = "local"
+    # Raw heuristic score before the fallback cap, set on local-tier scores.
+    # Lets the dashboard show when the 0.88 cap is binding vs. background.
+    raw_score: float | None = None
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -87,7 +96,6 @@ class PortfolioState(BaseModel):
     """Current portfolio state needed by the risk gate."""
 
     open_positions: int = 0
-    live_trades_today: int = 0
     day_trades_5_business_days: int = 0
     realized_pnl_today: float = 0
     buying_power: float = 10
@@ -101,7 +109,6 @@ class RiskLimits(BaseModel):
     allowed_symbols: list[str]
     target_position_percent: float
     max_open_positions: int
-    max_live_trades_per_day: int
     max_day_trades_5_business_days: int = 3
     max_daily_loss: float
     allow_live_trading: bool

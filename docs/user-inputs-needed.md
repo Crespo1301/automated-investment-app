@@ -8,48 +8,80 @@ Choose the first execution target:
 
 Confirmed: Alpaca.
 
-Needed from you later:
+Confirmed:
 
-- paper API keys
-- live API keys only when we are ready
-- account approval status after review completes
+- Alpaca account is approved.
+- Live API keys are configured locally only.
+- Tiny live-capital testing has started.
 
 ## 2. Asset Universe
 
-Confirmed first universe:
+Current approved universe:
 
 - `SPY`
 - `QQQ`
-- `NVDA`
-- `TSLA`
+- `DIA`
+- `IWM`
+- `VTI`
+- `VOO`
+- `SCHD`
+- `XLK`
+- `XLF`
+- `XLV`
+- `XLI`
+- `XLE`
+- `XLP`
+- `XLY`
+- `SMH`
+- `SOXX`
 - `AAPL`
+- `AMZN`
+- `AMD`
+- `AVGO`
+- `COST`
+- `GOOGL`
+- `HD`
+- `JPM`
+- `MA`
+- `META`
+- `MSFT`
+- `NVDA`
+- `PG`
+- `UNH`
+- `V`
+- `WMT`
+- `XOM`
 
 ## 3. Strategy Scope
 
-Starter lane selected by default:
+Current lanes:
 
 - `micro_breakout_v1`
-
-This can be changed after paper testing.
+- `opening_range_breakout_v1`
+- `vwap_reclaim_v1`
+- `relative_volume_spike_v1`
+- `pullback_continuation_v1`
 
 ## 4. Risk Limits
 
-Confirmed starter defaults:
+Current live guardrails:
 
-- max `$2` notional per live trade
-- max `1` open position
-- max `3` live trades per day
-- stop trading for the day at `$2` realized loss
-- paper mode first, then tiny live capital after explicit confirmation
+- position size targets `25%` of current portfolio value
+- max `6` open positions
+- no raw daily trade-count cap
+- same-day sells use a PDT guard backed by Alpaca `daytrade_count`
+- max `3` day trades in the rolling five-business-day PDT window
+- do not submit orders below Alpaca's `$1` fractional minimum
+- stop trading for the day at the configured realized-loss limit
+- live mode is only for tiny attended tests until the operator explicitly expands scope
 
 ## 5. AI Provider
 
-Confirmed: OpenAI.
+Confirmed priority:
 
-Needed from you:
-
-- rotated API key stored in local `.env`
-- whether the model is used for scoring only or also for daily summaries
+- Claude API first when funded/configured
+- OpenAI API second when funded/configured
+- deterministic local fallback when provider quota or billing is unavailable
 
 ## 6. Operating Preferences
 

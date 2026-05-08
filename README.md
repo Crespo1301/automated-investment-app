@@ -6,7 +6,7 @@ Internal trading and portfolio-management scaffold for future automation work.
 
 - This repo is an internal product lane, not a front-line client acquisition surface.
 - It is useful for long-term product ambition, but it ranks below `Portfolio/`, `highvolume_CRM/`, and maintained client sites in the weekly CSolutions workflow.
-- Live trading stays disabled unless explicitly approved.
+- Live trading requires explicit operator approval, funded broker credentials, and tiny attended sizing.
 
 ## Shared Docs
 
@@ -23,7 +23,7 @@ Internal trading and portfolio-management scaffold for future automation work.
 This scaffold includes:
 
 - `apps/api`: FastAPI service for market data, signals, risk, and execution intent
-- `apps/web`: Next.js dashboard shell for visibility and operator controls
+- `apps/web`: Next.js route-based dashboard for visibility, analytics, and operator controls
 - `docs/`: architecture, handoffs, and local operating notes
 
 ## Product Principles
@@ -79,6 +79,15 @@ npm run morning:status
 Then open `http://localhost:3000`. If the dashboard says `Backend API offline`, the
 FastAPI process is not running on `127.0.0.1:8000`.
 
+Dashboard routes:
+
+- `/` overview, daily usage, core controls, and current broker posture
+- `/portfolio` allocation, performance history, and compounding projection framework
+- `/strategies` signal funnel, provider usage, and fallback-scoring notes
+- `/risk` kill switch, PDT count, protection plan, and exit checks
+- `/orders` broker order ledger
+- `/settings` runtime state and Claude handoff constraints
+
 Daily operator flow:
 
 1. Refresh broker state.
@@ -129,6 +138,23 @@ Recommended morning modes:
 The Live Performance panel refreshes every 15 seconds through a same-origin web
 proxy and charts local broker reconciliation history. It reflects snapshots the
 app has recorded locally, not a guarantee of future returns.
+
+### Scoring Fallback
+
+The scorer uses Claude first, OpenAI second, and deterministic local fallback
+when provider API quota or billing is unavailable. The fallback is intentionally
+explainable and currently blends:
+
+- strategy prior
+- strategy confidence hint
+- trigger evidence quality
+- setup structure
+- stop-distance health
+
+Fallback scores are capped because they do not include news, spread, volatility
+regime, order-book depth, or broader market confirmation. Treat fallback scoring
+as a practical bridge for tiny attended live tests, not as a fully informed
+trading model.
 
 The watchlist is controlled by `INVESTMENT_APP_ALLOWED_SYMBOLS`. The default
 example includes broad ETFs and large liquid names, but every symbol should be
@@ -196,8 +222,8 @@ python -m app.worker --autopilot-loop
 
 - `apps/web` reads `INVESTMENT_WEB_API_BASE_URL`, defaulting to `http://127.0.0.1:8000`
 - start the API before the dashboard if you want live paper-account data
-- Alpaca verification or account funding does not imply permission to trade live from this repo
-- do not enable `INVESTMENT_APP_ALLOW_LIVE_TRADING=true` without explicit approval
+- Alpaca verification or account funding does not imply permission to increase sizing or unattended execution
+- do not enable or expand live execution without explicit approval and a current broker reconciliation
 - use `python -m app.worker --check-alpaca` and `python -m app.worker --reconcile-alpaca` before any discussion of live execution
 - use `python -m app.worker --check-broker` and `python -m app.worker --reconcile-broker` for the active paper/live configuration
 - local runtime audit files live under `.runtime/` and must not be committed

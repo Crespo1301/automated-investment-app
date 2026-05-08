@@ -30,7 +30,6 @@ def get_risk_limits() -> RiskLimits:
         allowed_symbols=configured_symbols(),
         target_position_percent=settings.position_size_percent,
         max_open_positions=settings.max_open_positions,
-        max_live_trades_per_day=settings.max_live_trades_per_day,
         max_day_trades_5_business_days=settings.max_day_trades_5_business_days,
         max_daily_loss=settings.max_daily_loss,
         allow_live_trading=settings.allow_live_trading,
@@ -44,7 +43,6 @@ def get_default_portfolio_state() -> PortfolioState:
 
     return PortfolioState(
         open_positions=0,
-        live_trades_today=0,
         realized_pnl_today=0,
         buying_power=10,
         portfolio_value=10,
@@ -59,7 +57,6 @@ def get_portfolio_state_from_broker(broker: AlpacaBroker) -> PortfolioState:
     positions = broker.list_positions()
     return PortfolioState(
         open_positions=len(positions),
-        live_trades_today=0,
         day_trades_5_business_days=_broker_day_trade_count(broker),
         realized_pnl_today=0,
         buying_power=account.buying_power,
@@ -110,6 +107,7 @@ def run_single_cycle(
         proposed_notional=target_notional,
         breakout_threshold=settings.strategy_breakout_threshold,
         stop_loss_percent=settings.strategy_stop_loss_percent,
+        take_profit_percent=settings.autopilot_take_profit_percent / 100,
         min_volume=settings.strategy_min_volume,
     )
 

@@ -19,12 +19,14 @@ class MicroBreakoutStrategy:
         proposed_notional: float,
         breakout_threshold: float = 0.0025,
         stop_loss_percent: float = 0.025,
+        take_profit_percent: float = 0.06,
         min_volume: float = 25_000,
     ) -> None:
         self.allowed_symbols = {symbol.upper() for symbol in allowed_symbols}
         self.proposed_notional = proposed_notional
         self.breakout_threshold = breakout_threshold
         self.stop_loss_percent = stop_loss_percent
+        self.take_profit_percent = take_profit_percent
         self.min_volume = min_volume
 
     def evaluate(self, event: MarketEvent) -> TradeCandidate | None:
@@ -52,6 +54,7 @@ class MicroBreakoutStrategy:
             relative_day_volume=relative_day_volume,
         )
         stop_price = event.price * (1 - self.stop_loss_percent)
+        take_profit_price = event.price * (1 + self.take_profit_percent)
         return TradeCandidate(
             correlation_id=event.correlation_id,
             strategy_id=self.strategy_id,
@@ -60,6 +63,7 @@ class MicroBreakoutStrategy:
             proposed_notional=self.proposed_notional,
             proposed_entry=event.price,
             proposed_stop=round(stop_price, 2),
+            proposed_take_profit=round(take_profit_price, 2),
             trigger_evidence=[
                 f"Price moved {move:.2%} above previous close, clearing the {self.breakout_threshold:.2%} early-breakout trigger.",
                 f"Intraday volume pressure {effective_volume:,.0f} exceeded minimum {self.min_volume:,.0f}.",
@@ -151,18 +155,21 @@ class AggressiveStrategyEngine:
         proposed_notional: float,
         breakout_threshold: float = 0.0025,
         stop_loss_percent: float = 0.025,
+        take_profit_percent: float = 0.06,
         min_volume: float = 25_000,
     ) -> None:
         self.allowed_symbols = {symbol.upper() for symbol in allowed_symbols}
         self.proposed_notional = proposed_notional
         self.breakout_threshold = breakout_threshold
         self.stop_loss_percent = stop_loss_percent
+        self.take_profit_percent = take_profit_percent
         self.min_volume = min_volume
         self.micro_breakout = MicroBreakoutStrategy(
             allowed_symbols=allowed_symbols,
             proposed_notional=proposed_notional,
             breakout_threshold=breakout_threshold,
             stop_loss_percent=stop_loss_percent,
+            take_profit_percent=take_profit_percent,
             min_volume=min_volume,
         )
 
@@ -307,6 +314,7 @@ class AggressiveStrategyEngine:
         evidence: list[str],
     ) -> TradeCandidate:
         stop_price = event.price * (1 - self.stop_loss_percent)
+        take_profit_price = event.price * (1 + self.take_profit_percent)
         return TradeCandidate(
             correlation_id=event.correlation_id,
             strategy_id=strategy_id,
@@ -315,6 +323,7 @@ class AggressiveStrategyEngine:
             proposed_notional=self.proposed_notional,
             proposed_entry=event.price,
             proposed_stop=round(stop_price, 2),
+            proposed_take_profit=round(take_profit_price, 2),
             trigger_evidence=evidence,
             confidence_hint=max(0.0, min(0.99, confidence_hint)),
         )

@@ -339,7 +339,7 @@ def get_daily_trade_recap(date: str | None = None) -> DailyTradeRecap:
             strategy_counts[strategy_id]["candidates"] += 1
 
         ai_score = (scored_candidate.get("ai_score") or {}) if scored_candidate else {}
-        provider = str(ai_score.get("model_name") or "none")
+        provider = _provider_tier(ai_score)
         if provider != "none":
             provider_counts[provider] = provider_counts.get(provider, 0) + 1
 
@@ -399,3 +399,20 @@ def get_daily_trade_recap(date: str | None = None) -> DailyTradeRecap:
         strategy_usage=strategy_usage,
         notes=notes,
     )
+
+
+def _provider_tier(ai_score: dict[str, Any]) -> str:
+    """Return a stable scorer tier for recap aggregation."""
+
+    provenance = str(ai_score.get("score_provenance") or "").lower()
+    if provenance in {"anthropic", "openai", "local"}:
+        return provenance
+
+    model_name = str(ai_score.get("model_name") or "none").lower()
+    if model_name.startswith("local-manual"):
+        return "local"
+    if "claude" in model_name or "anthropic" in model_name:
+        return "anthropic"
+    if "gpt" in model_name or "openai" in model_name:
+        return "openai"
+    return model_name

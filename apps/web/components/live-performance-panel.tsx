@@ -17,7 +17,7 @@ function currencyFormatter(value: number) {
 
 function buildPath(points: PerformancePoint[]) {
   if (points.length < 2) {
-    return "";
+    return { line: "", area: "" };
   }
 
   const values = points.map((point) => point.portfolio_value);
@@ -25,13 +25,16 @@ function buildPath(points: PerformancePoint[]) {
   const max = Math.max(...values);
   const range = Math.max(0.01, max - min);
 
-  return points
-    .map((point, index) => {
-      const x = (index / (points.length - 1)) * 100;
-      const y = 42 - ((point.portfolio_value - min) / range) * 34;
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-    })
-    .join(" ");
+  const coords = points.map((point, index) => {
+    const x = (index / (points.length - 1)) * 100;
+    const y = 42 - ((point.portfolio_value - min) / range) * 34;
+    return { x, y };
+  });
+
+  const line = coords.map((c) => `${c.x.toFixed(2)},${c.y.toFixed(2)}`).join(" ");
+  const area = `M 0 44 L ${coords.map((c) => `${c.x.toFixed(2)} ${c.y.toFixed(2)}`).join(" L ")} L 100 44 Z`;
+
+  return { line, area };
 }
 
 export function LivePerformancePanel() {
@@ -74,8 +77,8 @@ export function LivePerformancePanel() {
     <article className="panel performance-panel">
       <div className="section-title">
         <div>
-          <h2>Live Performance</h2>
-          <p>Auto-refreshing account value, buying power, and open risk.</p>
+          <h2>Equity curve</h2>
+          <p>Auto-refreshing portfolio value, buying power, and open risk.</p>
         </div>
         <span className={gain >= 0 ? "state-pill state-healthy" : "state-pill state-blocked"}>
           {gain >= 0 ? "+" : ""}
@@ -89,27 +92,33 @@ export function LivePerformancePanel() {
           <strong>{latest ? currencyFormatter(latest.portfolio_value) : "offline"}</strong>
         </div>
         <div>
-          <span>Buying Power</span>
+          <span>Buying power</span>
           <strong>{latest ? currencyFormatter(latest.buying_power) : "offline"}</strong>
         </div>
         <div>
-          <span>Open Orders</span>
+          <span>Open orders</span>
           <strong>{latest ? latest.open_orders : 0}</strong>
         </div>
       </div>
 
       <div className="chart-frame">
-        {path ? (
-          <svg viewBox="0 0 100 48" role="img" aria-label="Portfolio value trend">
-            <path className="chart-area" d={`${path} L 100 48 L 0 48 Z`} />
-            <path className="chart-line" d={path} />
+        {path.line ? (
+          <svg viewBox="0 0 100 48" preserveAspectRatio="none" role="img" aria-label="Portfolio value trend">
+            <defs>
+              <linearGradient id="chart-area-gradient" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor="rgba(34, 197, 94, 0.3)" />
+                <stop offset="100%" stopColor="rgba(34, 197, 94, 0)" />
+              </linearGradient>
+            </defs>
+            <path className="chart-area" d={path.area} />
+            <polyline className="chart-line" points={path.line} vectorEffect="non-scaling-stroke" />
           </svg>
         ) : (
           <div className="empty-state">Refresh broker state to build chart history.</div>
         )}
       </div>
 
-      <p className="thesis">{history.notes[0]}</p>
+      <p className="thesis" style={{ marginTop: 10 }}>{history.notes[0]}</p>
     </article>
   );
 }

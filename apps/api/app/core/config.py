@@ -20,7 +20,6 @@ class Settings(BaseSettings):
     )
     position_size_percent: float = 0.25
     max_open_positions: int = 6
-    max_live_trades_per_day: int = 4
     max_day_trades_5_business_days: int = 3
     max_daily_loss: float = 2.0
     strategy_breakout_threshold: float = 0.0025
