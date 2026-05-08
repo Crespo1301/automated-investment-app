@@ -471,6 +471,109 @@ def test_local_heuristic_rewards_favorable_risk_reward() -> None:
     assert strong_score > poor_score
 
 
+def test_local_heuristic_rewards_clean_market_context() -> None:
+    base = {
+        "correlation_id": "evt_test",
+        "strategy_id": "opening_range_breakout_v1",
+        "symbol": "AAPL",
+        "side": "buy",
+        "proposed_notional": 2,
+        "proposed_entry": 100,
+        "proposed_stop": 98,
+        "proposed_take_profit": 105,
+        "trigger_evidence": [
+            "Price broke opening range high by 0.42%.",
+            "Recent volume is 2.40x the recent average.",
+            "Price is 1.20% above previous close.",
+        ],
+        "confidence_hint": 0.82,
+    }
+    clean_context = TradeCandidate(
+        **base,
+        spread_bps=3.5,
+        orderbook_imbalance=0.42,
+        intraday_volatility_percent=0.34,
+        volatility_regime="normal",
+        market_move_percent=0.006,
+        market_regime="risk_on",
+        news_count_24h=2,
+        latest_news_headline="AAPL shares rise after analyst upgrade",
+        news_sentiment_hint="positive",
+    )
+    noisy_context = TradeCandidate(
+        **base,
+        spread_bps=82,
+        orderbook_imbalance=-0.46,
+        intraday_volatility_percent=1.4,
+        volatility_regime="extreme",
+        market_move_percent=-0.008,
+        market_regime="risk_off",
+        news_count_24h=1,
+        latest_news_headline="AAPL shares fall after demand warning",
+        news_sentiment_hint="negative",
+    )
+
+    clean_score = TradeScorer().score(clean_context).ai_score.score
+    noisy = TradeScorer().score(noisy_context).ai_score
+
+    assert clean_score > noisy.score
+    assert any("wide" in concern.lower() for concern in noisy.concerns)
+
+
+def test_strategy_candidates_copy_market_context() -> None:
+    strategy = MicroBreakoutStrategy(
+        allowed_symbols=["SPY"],
+        proposed_notional=2.5,
+        breakout_threshold=0.0025,
+        min_volume=25_000,
+        stop_loss_percent=0.025,
+    )
+    event = MarketEvent(
+        source="test",
+        symbol="SPY",
+        event_kind="bar",
+        price=101,
+        previous_close=100,
+        volume=50_000,
+        spread_bps=4.2,
+        orderbook_imbalance=0.31,
+        intraday_volatility_percent=0.38,
+        volatility_regime="normal",
+        market_move_percent=0.005,
+        market_regime="risk_on",
+        news_count_24h=1,
+        latest_news_headline="SPY advances with broad market strength",
+        news_sentiment_hint="positive",
+    )
+
+    candidate = strategy.evaluate(event)
+
+    assert candidate is not None
+    assert candidate.spread_bps == 4.2
+    assert candidate.orderbook_imbalance == 0.31
+    assert candidate.volatility_regime == "normal"
+    assert candidate.market_regime == "risk_on"
+    assert candidate.news_sentiment_hint == "positive"
+    assert any("Quote spread is 4.2 bps" in item for item in candidate.trigger_evidence)
+
+
+def test_alpaca_quote_context_uses_top_of_book_proxy() -> None:
+    class Quote:
+        bid_price = 100
+        ask_price = 100.05
+        bid_size = 300
+        ask_size = 100
+
+    broker = object.__new__(AlpacaBroker)
+    context = broker._quote_context(Quote())
+
+    assert context["bid_price"] == 100
+    assert context["ask_price"] == 100.05
+    assert context["quote_depth"] == 400
+    assert context["orderbook_imbalance"] == 0.5
+    assert 4.9 < context["spread_bps"] < 5.1
+
+
 def test_local_heuristic_rewards_stronger_setup_evidence() -> None:
     weak_candidate = TradeCandidate(
         correlation_id="evt_test",

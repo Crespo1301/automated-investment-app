@@ -5,6 +5,7 @@ constructed only when credentials are present and can target paper or live
 depending on runtime settings.
 """
 
+import math
 from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -90,7 +91,7 @@ class AlpacaBroker:
         if missing_names:
             raise MissingBrokerCredentialsError(missing_names)
 
-        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.historical import NewsClient, StockHistoricalDataClient
         from alpaca.trading.client import TradingClient
 
         self.client = TradingClient(
@@ -99,6 +100,10 @@ class AlpacaBroker:
             paper=settings.alpaca_paper,
         )
         self.data_client = StockHistoricalDataClient(
+            settings.alpaca_api_key,
+            settings.alpaca_secret_key,
+        )
+        self.news_client = NewsClient(
             settings.alpaca_api_key,
             settings.alpaca_secret_key,
         )
@@ -141,12 +146,16 @@ class AlpacaBroker:
         if not normalized_symbols:
             return []
 
+        benchmark_symbols = ["SPY", "QQQ"]
+        request_symbols = list(dict.fromkeys(normalized_symbols + benchmark_symbols))
         snapshots = self.data_client.get_stock_snapshot(
-            StockSnapshotRequest(symbol_or_symbols=normalized_symbols)
+            StockSnapshotRequest(symbol_or_symbols=request_symbols)
         )
         clock = self.get_market_clock()
         session_state = self._resolve_session_state(clock)
-        intraday_profiles = self._get_intraday_profiles(normalized_symbols, clock)
+        intraday_profiles = self._get_intraday_profiles(request_symbols, clock)
+        market_context = self._get_broader_market_context(snapshots, benchmark_symbols)
+        news_context = self._get_news_context(normalized_symbols)
         events: list[MarketEvent] = []
         missing_symbols: list[str] = []
 
@@ -172,6 +181,9 @@ class AlpacaBroker:
             volume = getattr(minute_bar, "volume", 0) or 0
             previous_close = getattr(previous_daily_bar, "close", None)
             intraday_profile = intraday_profiles.get(symbol, {})
+            latest_quote = getattr(snapshot, "latest_quote", None)
+            quote_context = self._quote_context(latest_quote)
+            symbol_news = news_context.get(symbol, {})
 
             if price is None or previous_close is None:
                 missing_symbols.append(symbol)
@@ -200,6 +212,18 @@ class AlpacaBroker:
                     recent_volume=intraday_profile.get("recent_volume"),
                     average_recent_volume=intraday_profile.get("average_recent_volume"),
                     previous_bar_close=intraday_profile.get("previous_bar_close"),
+                    bid_price=quote_context.get("bid_price"),
+                    ask_price=quote_context.get("ask_price"),
+                    spread_bps=quote_context.get("spread_bps"),
+                    quote_depth=quote_context.get("quote_depth"),
+                    orderbook_imbalance=quote_context.get("orderbook_imbalance"),
+                    intraday_volatility_percent=intraday_profile.get("intraday_volatility_percent"),
+                    volatility_regime=intraday_profile.get("volatility_regime", "unknown"),
+                    market_move_percent=market_context.get("market_move_percent"),
+                    market_regime=market_context.get("market_regime", "unknown"),
+                    news_count_24h=symbol_news.get("news_count_24h"),
+                    latest_news_headline=symbol_news.get("latest_news_headline"),
+                    news_sentiment_hint=symbol_news.get("news_sentiment_hint", "unknown"),
                     timestamp=timestamp,
                     session_state=session_state,
                 )
@@ -538,6 +562,168 @@ class AlpacaBroker:
 
         return float(value)
 
+    def _quote_context(self, quote: object | None) -> dict[str, float]:
+        """Extract spread and top-of-book depth proxy from the latest quote."""
+
+        if quote is None:
+            return {}
+
+        bid_price = self._optional_float(getattr(quote, "bid_price", None))
+        ask_price = self._optional_float(getattr(quote, "ask_price", None))
+        bid_size = self._optional_float(getattr(quote, "bid_size", None)) or 0
+        ask_size = self._optional_float(getattr(quote, "ask_size", None)) or 0
+        context: dict[str, float] = {}
+
+        if bid_price is not None:
+            context["bid_price"] = bid_price
+        if ask_price is not None:
+            context["ask_price"] = ask_price
+
+        if bid_price and ask_price and ask_price >= bid_price:
+            mid_price = (bid_price + ask_price) / 2
+            if mid_price > 0:
+                context["spread_bps"] = ((ask_price - bid_price) / mid_price) * 10_000
+
+        quote_depth = bid_size + ask_size
+        if quote_depth > 0:
+            context["quote_depth"] = quote_depth
+            context["orderbook_imbalance"] = (bid_size - ask_size) / quote_depth
+
+        return context
+
+    def _get_broader_market_context(
+        self,
+        snapshots: dict[str, object],
+        benchmark_symbols: list[str],
+    ) -> dict[str, float | str]:
+        """Build a simple risk-on/risk-off context from benchmark snapshots."""
+
+        moves: list[float] = []
+        for symbol in benchmark_symbols:
+            snapshot = snapshots.get(symbol)
+            if snapshot is None:
+                continue
+            minute_bar = getattr(snapshot, "minute_bar", None)
+            latest_trade = getattr(snapshot, "latest_trade", None)
+            previous_daily_bar = getattr(snapshot, "previous_daily_bar", None)
+            price = (
+                getattr(minute_bar, "close", None)
+                or getattr(latest_trade, "price", None)
+            )
+            previous_close = getattr(previous_daily_bar, "close", None)
+            if price is None or previous_close is None or previous_close <= 0:
+                continue
+            moves.append((float(price) - float(previous_close)) / float(previous_close))
+
+        if not moves:
+            return {"market_regime": "unknown"}
+
+        market_move = sum(moves) / len(moves)
+        if market_move >= 0.003:
+            regime = "risk_on"
+        elif market_move <= -0.003:
+            regime = "risk_off"
+        else:
+            regime = "neutral"
+
+        return {
+            "market_move_percent": market_move,
+            "market_regime": regime,
+        }
+
+    def _get_news_context(self, symbols: list[str]) -> dict[str, dict[str, object]]:
+        """Fetch recent Alpaca news context for the watchlist without blocking trades."""
+
+        try:
+            from alpaca.data.requests import NewsRequest
+
+            news_set = self.news_client.get_news(
+                NewsRequest(
+                    symbols=",".join(symbols),
+                    start=datetime.now(UTC) - timedelta(days=1),
+                    limit=min(50, max(1, len(symbols) * 3)),
+                    include_content=False,
+                    exclude_contentless=True,
+                )
+            )
+        except Exception:
+            return {}
+
+        rows = []
+        data = getattr(news_set, "data", None)
+        if isinstance(data, dict):
+            rows = data.get("news") or []
+        elif isinstance(data, list):
+            rows = data
+
+        context = {
+            symbol: {
+                "news_count_24h": 0,
+                "latest_news_headline": None,
+                "news_sentiment_hint": "unknown",
+            }
+            for symbol in symbols
+        }
+        for item in rows:
+            item_symbols = [str(symbol).upper() for symbol in getattr(item, "symbols", [])]
+            headline = str(getattr(item, "headline", "") or "")
+            summary = str(getattr(item, "summary", "") or "")
+            sentiment = self._news_sentiment_hint(f"{headline} {summary}")
+            for symbol in symbols:
+                if symbol not in item_symbols:
+                    continue
+                symbol_context = context[symbol]
+                symbol_context["news_count_24h"] = int(symbol_context["news_count_24h"] or 0) + 1
+                if symbol_context["latest_news_headline"] is None and headline:
+                    symbol_context["latest_news_headline"] = headline[:180]
+                if sentiment != "unknown":
+                    symbol_context["news_sentiment_hint"] = sentiment
+
+        return context
+
+    def _news_sentiment_hint(self, text: str) -> str:
+        """Return a tiny deterministic sentiment hint from headline language."""
+
+        lowered = text.lower()
+        positive_words = {
+            "beats",
+            "beat",
+            "raises",
+            "upgrade",
+            "surge",
+            "record",
+            "growth",
+            "profit",
+            "profits",
+            "bullish",
+            "wins",
+            "revive",
+        }
+        negative_words = {
+            "miss",
+            "misses",
+            "downgrade",
+            "falls",
+            "fall",
+            "drop",
+            "drops",
+            "lawsuit",
+            "probe",
+            "warning",
+            "bearish",
+            "cut",
+            "cuts",
+        }
+        positive_count = sum(1 for word in positive_words if word in lowered)
+        negative_count = sum(1 for word in negative_words if word in lowered)
+        if positive_count > negative_count:
+            return "positive"
+        if negative_count > positive_count:
+            return "negative"
+        if positive_count or negative_count:
+            return "neutral"
+        return "unknown"
+
     def _get_intraday_profiles(
         self,
         symbols: list[str],
@@ -584,11 +770,13 @@ class AlpacaBroker:
             opening_bars = sorted_bars[:15]
             recent_bars = sorted_bars[-10:]
             volume_bars = sorted_bars[-30:]
+            volatility_bars = sorted_bars[-30:]
             total_volume = sum(float(bar.volume or 0) for bar in sorted_bars)
             vwap_numerator = sum(
                 float((bar.vwap or bar.close) or 0) * float(bar.volume or 0)
                 for bar in sorted_bars
             )
+            intraday_volatility = self._intraday_volatility_percent(volatility_bars)
             profiles[str(symbol).upper()] = {
                 "vwap": (
                     round(vwap_numerator / total_volume, 4)
@@ -609,9 +797,38 @@ class AlpacaBroker:
                     if len(sorted_bars) >= 2
                     else float(sorted_bars[-1].close)
                 ),
+                "intraday_volatility_percent": intraday_volatility,
+                "volatility_regime": self._volatility_regime(intraday_volatility),
             }
 
         return profiles
+
+    def _intraday_volatility_percent(self, bars: list[object]) -> float | None:
+        """Return recent minute close-to-close realized volatility as percent."""
+
+        closes = [float(getattr(bar, "close", 0) or 0) for bar in bars]
+        returns = [
+            (closes[index] - closes[index - 1]) / closes[index - 1]
+            for index in range(1, len(closes))
+            if closes[index - 1] > 0
+        ]
+        if len(returns) < 2:
+            return None
+
+        mean_return = sum(returns) / len(returns)
+        variance = sum((item - mean_return) ** 2 for item in returns) / (len(returns) - 1)
+        return math.sqrt(variance) * math.sqrt(len(returns)) * 100
+
+    def _volatility_regime(self, volatility_percent: float | None) -> str:
+        if volatility_percent is None:
+            return "unknown"
+        if volatility_percent < 0.15:
+            return "calm"
+        if volatility_percent < 0.45:
+            return "normal"
+        if volatility_percent < 0.90:
+            return "elevated"
+        return "extreme"
 
     def _resolve_session_state(self, clock: MarketClockStatus) -> str:
         """Map the broker clock into the normalized market-event session state."""

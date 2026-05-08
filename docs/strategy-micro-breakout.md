@@ -45,3 +45,18 @@ OpenAI scoring is advisory. It may lower confidence or add concerns, but it cann
 - bypass live-trading locks
 - create broker orders directly
 
+## Market Context Layer
+
+Live Alpaca market events now attempt to attach extra context before strategy
+and scoring:
+
+- quote spread in basis points
+- top-of-book bid/ask size imbalance as a depth proxy
+- recent intraday realized-volatility regime
+- SPY/QQQ broader-market risk regime
+- recent headline count and deterministic sentiment hint
+
+Strategies copy that context into each candidate and include concise evidence
+bullets. The local fallback scorer uses the same fields when provider API quota
+is unavailable. Missing context is treated as neutral; adverse context reduces
+conviction rather than bypassing the deterministic risk gate.

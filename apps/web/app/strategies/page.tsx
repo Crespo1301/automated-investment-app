@@ -104,11 +104,35 @@ export default async function StrategiesPage() {
           </div>
           <ScoreAnatomy />
           <p className="thesis" style={{ marginTop: 12 }}>
-            What the fallback does <strong>not</strong> see: news, spread, volatility regime, order-book depth, broader market
-            confirmation. Every fallback score carries those caveats in its concerns array.
+            The fallback now uses available market context instead of ignoring it. Missing feeds stay neutral; adverse
+            spread, depth, volatility, market-regime, or headline signals reduce conviction before risk review.
           </p>
         </article>
       </section>
+
+      <article className="panel">
+        <div className="section-title">
+          <div>
+            <h2>Context Inputs</h2>
+            <p>What each live Alpaca event tries to carry into candidate scoring.</p>
+          </div>
+          <span className="state-pill state-info">feed-aware</span>
+        </div>
+        <div className="visual-grid">
+          {[
+            ["Spread", "Latest bid/ask spread in basis points to avoid paying too much friction."],
+            ["Depth Proxy", "Top-of-book bid/ask size imbalance to spot pressure near the touch."],
+            ["Volatility", "Recent minute-bar realized volatility classified as calm, normal, elevated, or extreme."],
+            ["Market Regime", "SPY and QQQ benchmark drift classified as risk-on, neutral, or risk-off."],
+            ["News", "Recent Alpaca headlines with a deterministic positive, neutral, or negative hint."],
+          ].map(([label, description]) => (
+            <div className="mini-panel" key={label}>
+              <span className="metric-label">{label}</span>
+              <strong>{description}</strong>
+            </div>
+          ))}
+        </div>
+      </article>
 
       <article className="panel">
         <div className="section-title">

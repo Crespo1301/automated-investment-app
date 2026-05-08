@@ -67,6 +67,8 @@ Responsibilities:
 - normalize raw events
 - stamp provenance and timestamps
 - publish replayable internal events
+- enrich events with quote spread, top-of-book depth proxy, intraday volatility,
+  broader market regime, and recent headline context when available
 
 ### `strategy_engine`
 
@@ -84,6 +86,8 @@ Responsibilities:
 - add confidence and context
 - summarize news or regime factors
 - preserve prompt and model provenance
+- fail over through Claude, OpenAI, then deterministic scoring that still uses
+  available liquidity, volatility, market-regime, and news context
 
 ### `risk_engine`
 
@@ -111,4 +115,3 @@ Responsibilities:
 4. Add streaming ingestion and one deterministic strategy
 5. Add AI scoring provider behind a narrow interface
 6. Add notifications, kill switch, and reconciliation jobs
-

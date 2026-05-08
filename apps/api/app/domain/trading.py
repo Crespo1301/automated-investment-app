@@ -16,6 +16,9 @@ TradingMode = Literal["paper", "live"]
 TradeSide = Literal["buy", "sell"]
 RiskState = Literal["approved", "rejected"]
 ScoreProvenance = Literal["anthropic", "openai", "local"]
+VolatilityRegime = Literal["unknown", "calm", "normal", "elevated", "extreme"]
+MarketRegime = Literal["unknown", "risk_on", "neutral", "risk_off"]
+NewsSentimentHint = Literal["unknown", "positive", "neutral", "negative"]
 
 
 def new_id(prefix: str) -> str:
@@ -48,6 +51,18 @@ class MarketEvent(BaseModel):
     recent_volume: float | None = None
     average_recent_volume: float | None = None
     previous_bar_close: float | None = None
+    bid_price: float | None = None
+    ask_price: float | None = None
+    spread_bps: float | None = None
+    quote_depth: float | None = None
+    orderbook_imbalance: float | None = None
+    intraday_volatility_percent: float | None = None
+    volatility_regime: VolatilityRegime = "unknown"
+    market_move_percent: float | None = None
+    market_regime: MarketRegime = "unknown"
+    news_count_24h: int | None = None
+    latest_news_headline: str | None = None
+    news_sentiment_hint: NewsSentimentHint = "unknown"
     session_state: Literal["pre_market", "regular", "after_hours", "closed"] = "regular"
 
 
@@ -63,6 +78,15 @@ class TradeCandidate(BaseModel):
     proposed_entry: float
     proposed_stop: float
     proposed_take_profit: float | None = None
+    spread_bps: float | None = None
+    orderbook_imbalance: float | None = None
+    intraday_volatility_percent: float | None = None
+    volatility_regime: VolatilityRegime = "unknown"
+    market_move_percent: float | None = None
+    market_regime: MarketRegime = "unknown"
+    news_count_24h: int | None = None
+    latest_news_headline: str | None = None
+    news_sentiment_hint: NewsSentimentHint = "unknown"
     trigger_evidence: list[str]
     confidence_hint: float = Field(ge=0, le=1)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

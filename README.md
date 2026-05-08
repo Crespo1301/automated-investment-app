@@ -150,11 +150,23 @@ explainable and currently blends:
 - trigger evidence quality
 - setup structure
 - stop-distance health
+- market context health
 
-Fallback scores are capped because they do not include news, spread, volatility
-regime, order-book depth, or broader market confirmation. Treat fallback scoring
-as a practical bridge for tiny attended live tests, not as a fully informed
-trading model.
+Market context is pulled from the Alpaca market-data surface when available:
+
+- latest quote spread in basis points
+- top-of-book bid/ask size imbalance as a lightweight depth proxy
+- recent intraday realized volatility and volatility regime
+- broad SPY/QQQ risk-on/risk-off regime
+- recent Alpaca headlines with a deterministic sentiment hint
+
+Missing context stays neutral so temporary feed failures do not create fake
+certainty. Wide spreads, ask-heavy depth, extreme volatility, risk-off market
+context, and negative headline hints reduce fallback conviction. Clean spread,
+bid-side depth, normal or elevated tradable volatility, risk-on index context,
+and positive headlines improve fallback conviction. Scores are still capped
+because the local layer is a bounded bridge for tiny attended live tests, not
+a fully informed trading model.
 
 The watchlist is controlled by `INVESTMENT_APP_ALLOWED_SYMBOLS`. The default
 example includes broad ETFs and large liquid names, but every symbol should be

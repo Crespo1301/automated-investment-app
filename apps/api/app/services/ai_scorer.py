@@ -12,8 +12,9 @@ The local heuristic is intentionally explainable. While provider keys are
 unfunded, this layer carries scoring, so its contract is:
 
 1. Every score is bounded (cap = ``FALLBACK_CAP``, currently 0.88).
-2. Every score carries a concerns list explaining what the heuristic does
-   *not* know (no news, spread, depth, regime, broader market context).
+2. Every score carries a concerns list explaining missing context and binding
+   constraints. When news, spread, depth, volatility, or broader market context
+   are available, the fallback uses them.
 3. The cap is reported as a binding constraint only when the raw blended
    score actually exceeds it - otherwise it's noted as background.
 4. Strategy lanes without a registered prior are capped harder
@@ -232,13 +233,15 @@ class TradeScorer:
         evidence_score, evidence_notes = self._evidence_score(candidate)
         stop_risk_score = self._stop_risk_score(candidate)
         setup_quality_score = self._setup_quality_score(candidate)
+        market_context_score, market_context_notes = self._market_context_score(candidate)
 
         raw_score = (
-            strategy_prior * 0.30
-            + confidence_score * 0.28
-            + evidence_score * 0.20
-            + setup_quality_score * 0.12
+            strategy_prior * 0.27
+            + confidence_score * 0.24
+            + evidence_score * 0.18
+            + setup_quality_score * 0.11
             + stop_risk_score * 0.10
+            + market_context_score * 0.10
         )
         raw_score = max(0.0, raw_score)
 
@@ -247,7 +250,7 @@ class TradeScorer:
         # "Fallback score is capped at 0.88" - the test suite asserts on it.
         concerns: list[str] = [
             f"Fallback score is capped at {FALLBACK_CAP:.2f} because no external model context was available.",
-            "Fallback scoring does not include news, spread, volatility regime, order-book depth, or broader market confirmation.",
+            "Fallback used deterministic market-context checks for spread, top-of-book depth, volatility, broader market regime, and news when available.",
         ]
         if raw_score > FALLBACK_CAP:
             concerns.append(
@@ -264,18 +267,21 @@ class TradeScorer:
         capped_score = min(applied_cap, raw_score)
 
         concerns.extend(evidence_notes)
+        concerns.extend(market_context_notes)
         if evidence_score < 0.55:
             concerns.append("Trigger evidence is thin for aggressive autonomous entries.")
         if stop_risk_score < 0.5:
             concerns.append("Proposed stop distance is wide for this starter strategy.")
         if setup_quality_score < 0.5:
             concerns.append("Setup evidence did not show enough high-conviction momentum structure.")
+        if market_context_score < 0.45:
+            concerns.append("Market context showed enough friction to reduce fallback conviction.")
 
         # NOTE: summary phrasing must include the literal substring
         # "Local fallback blended" - the test suite asserts on it.
         summary = (
             "Local fallback blended strategy prior, confidence hint, trigger evidence quality, "
-            "setup structure, and stop distance."
+            "setup structure, stop distance, and market context."
         )
         return capped_score, raw_score, summary, concerns
 
@@ -407,6 +413,76 @@ class TradeScorer:
 
         return max(0.0, min(1.0, tight_stop_score * 0.55 + reward_score * 0.45))
 
+    def _market_context_score(self, candidate: TradeCandidate) -> tuple[float, list[str]]:
+        """Score liquidity, regime, and news context without needing a model."""
+
+        score = 0.50
+        notes: list[str] = []
+
+        if candidate.spread_bps is None:
+            notes.append("Spread context unavailable; fallback treated liquidity as neutral.")
+        elif candidate.spread_bps <= 5:
+            score += 0.10
+        elif candidate.spread_bps <= 15:
+            score += 0.04
+        elif candidate.spread_bps <= 30:
+            score -= 0.04
+            notes.append(f"Spread was {candidate.spread_bps:.1f} bps, which is only moderate for fast entries.")
+        elif candidate.spread_bps <= 75:
+            score -= 0.12
+            notes.append(f"Spread was wide at {candidate.spread_bps:.1f} bps.")
+        else:
+            score -= 0.22
+            notes.append(f"Spread was extremely wide at {candidate.spread_bps:.1f} bps.")
+
+        if candidate.orderbook_imbalance is None:
+            notes.append("Top-of-book depth context unavailable; fallback treated depth as neutral.")
+        elif candidate.orderbook_imbalance >= 0.35:
+            score += 0.08
+        elif candidate.orderbook_imbalance >= 0.20:
+            score += 0.05
+        elif candidate.orderbook_imbalance <= -0.35:
+            score -= 0.10
+            notes.append(f"Top-of-book imbalance was ask-heavy at {candidate.orderbook_imbalance:+.2f}.")
+        elif candidate.orderbook_imbalance <= -0.20:
+            score -= 0.06
+            notes.append(f"Top-of-book imbalance leaned against the entry at {candidate.orderbook_imbalance:+.2f}.")
+
+        if candidate.volatility_regime == "unknown":
+            notes.append("Volatility regime unavailable; fallback treated volatility as neutral.")
+        elif candidate.volatility_regime == "normal":
+            score += 0.06
+        elif candidate.volatility_regime == "elevated":
+            score += 0.02
+        elif candidate.volatility_regime == "calm":
+            score -= 0.02
+            notes.append("Volatility regime was calm, which can limit fast small-win follow-through.")
+        elif candidate.volatility_regime == "extreme":
+            score -= 0.12
+            notes.append("Volatility regime was extreme, which increases slippage and stop-out risk.")
+
+        if candidate.market_regime == "unknown":
+            notes.append("Broader market regime unavailable; fallback treated index confirmation as neutral.")
+        elif candidate.market_regime == "risk_on":
+            score += 0.08
+        elif candidate.market_regime == "neutral":
+            score += 0.02
+        elif candidate.market_regime == "risk_off":
+            score -= 0.10
+            notes.append("Broader market regime was risk-off during a long entry setup.")
+
+        if candidate.news_sentiment_hint == "positive":
+            score += 0.05
+        elif candidate.news_sentiment_hint == "neutral":
+            score += 0.01
+        elif candidate.news_sentiment_hint == "negative":
+            score -= 0.08
+            notes.append("Recent news sentiment hint was negative.")
+        elif candidate.news_count_24h is None:
+            notes.append("News context unavailable; fallback treated headlines as neutral.")
+
+        return max(0.0, min(1.0, score)), notes
+
     def _score_with_anthropic(self, candidate: TradeCandidate) -> ScoredTradeCandidate:
         """Call Anthropic and coerce the answer back into the narrow score schema."""
 
@@ -424,7 +500,8 @@ class TradeScorer:
                 "Do not bypass risk limits.",
                 "Score should be between 0 and 1.",
                 "Reward asymmetric upside and early momentum when evidence is strong.",
-                "Penalize stale breakouts, weak volume, bad stop distance, or vague evidence.",
+                "Use supplied spread, top-of-book depth, volatility, market regime, and news context when present.",
+                "Penalize stale breakouts, weak volume, bad stop distance, wide spread, risk-off context, or vague evidence.",
             ],
             "candidate": candidate.model_dump(mode="json"),
         }
@@ -465,7 +542,8 @@ class TradeScorer:
                 "Do not bypass risk limits.",
                 "Score should be between 0 and 1.",
                 "Reward asymmetric upside and early momentum when evidence is strong.",
-                "Penalize stale breakouts, weak volume, bad stop distance, or vague evidence.",
+                "Use supplied spread, top-of-book depth, volatility, market regime, and news context when present.",
+                "Penalize stale breakouts, weak volume, bad stop distance, wide spread, risk-off context, or vague evidence.",
             ],
             "candidate": candidate.model_dump(mode="json"),
         }

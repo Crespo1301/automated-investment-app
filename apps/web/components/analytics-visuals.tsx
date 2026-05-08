@@ -235,28 +235,33 @@ export function ProviderPosture({
 const FALLBACK_WEIGHTS = [
   {
     label: "Strategy prior",
-    weight: 0.3,
+    weight: 0.27,
     description: "Historical win-rate prior per lane (opening range, VWAP, volume, pullback, micro breakout).",
   },
   {
     label: "Confidence hint",
-    weight: 0.28,
+    weight: 0.24,
     description: "Strategy-supplied confidence on the candidate before scoring.",
   },
   {
     label: "Trigger evidence",
-    weight: 0.2,
+    weight: 0.18,
     description: "Specificity and keyword quality of trigger evidence; penalizes 'unavailable / weak / stale'.",
   },
   {
     label: "Setup structure",
-    weight: 0.12,
+    weight: 0.11,
     description: "Aggressive small-win structure: opening range, VWAP, volume pressure, pullback recovery.",
   },
   {
     label: "Stop-risk",
     weight: 0.1,
     description: "Risk distance from entry to stop. ≤1.5% → 1.0, ≤3% → 0.75, ≤5% → 0.4, otherwise 0.1.",
+  },
+  {
+    label: "Market context",
+    weight: 0.1,
+    description: "Spread, top-of-book depth, volatility, SPY/QQQ regime, and headline sentiment when available.",
   },
 ];
 

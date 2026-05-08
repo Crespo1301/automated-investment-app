@@ -64,11 +64,13 @@ class MicroBreakoutStrategy:
             proposed_entry=event.price,
             proposed_stop=round(stop_price, 2),
             proposed_take_profit=round(take_profit_price, 2),
+            **_candidate_market_context(event),
             trigger_evidence=[
                 f"Price moved {move:.2%} above previous close, clearing the {self.breakout_threshold:.2%} early-breakout trigger.",
                 f"Intraday volume pressure {effective_volume:,.0f} exceeded minimum {self.min_volume:,.0f}.",
                 self._range_evidence(day_position),
                 self._relative_volume_evidence(relative_day_volume),
+                *_market_context_evidence(event),
                 "Candidate created by aggressive liquid-watchlist breakout strategy.",
             ],
             confidence_hint=confidence_hint,
@@ -324,7 +326,8 @@ class AggressiveStrategyEngine:
             proposed_entry=event.price,
             proposed_stop=round(stop_price, 2),
             proposed_take_profit=round(take_profit_price, 2),
-            trigger_evidence=evidence,
+            **_candidate_market_context(event),
+            trigger_evidence=evidence + _market_context_evidence(event),
             confidence_hint=max(0.0, min(0.99, confidence_hint)),
         )
 
@@ -346,3 +349,57 @@ class AggressiveStrategyEngine:
             return "Recent volume profile was unavailable from intraday bars."
 
         return f"Recent volume is {self._recent_volume_ratio(event):.2f}x the recent average."
+
+
+def _candidate_market_context(event: MarketEvent) -> dict[str, object]:
+    """Copy optional market context from the event into the candidate."""
+
+    return {
+        "spread_bps": event.spread_bps,
+        "orderbook_imbalance": event.orderbook_imbalance,
+        "intraday_volatility_percent": event.intraday_volatility_percent,
+        "volatility_regime": event.volatility_regime,
+        "market_move_percent": event.market_move_percent,
+        "market_regime": event.market_regime,
+        "news_count_24h": event.news_count_24h,
+        "latest_news_headline": event.latest_news_headline,
+        "news_sentiment_hint": event.news_sentiment_hint,
+    }
+
+
+def _market_context_evidence(event: MarketEvent) -> list[str]:
+    """Return concise evidence bullets for spread, depth, volatility, market, and news."""
+
+    evidence: list[str] = []
+    if event.spread_bps is not None:
+        evidence.append(f"Quote spread is {event.spread_bps:.1f} bps.")
+    else:
+        evidence.append("Quote spread was unavailable from the market snapshot.")
+
+    if event.orderbook_imbalance is not None:
+        evidence.append(f"Top-of-book depth imbalance is {event.orderbook_imbalance:+.2f}.")
+    else:
+        evidence.append("Order-book depth proxy was unavailable from the market snapshot.")
+
+    if event.intraday_volatility_percent is not None:
+        evidence.append(
+            f"Intraday volatility regime is {event.volatility_regime} at {event.intraday_volatility_percent:.2f}%."
+        )
+    else:
+        evidence.append("Intraday volatility regime was unavailable.")
+
+    if event.market_move_percent is not None:
+        evidence.append(
+            f"Broader market regime is {event.market_regime} with benchmark move {event.market_move_percent:.2%}."
+        )
+    else:
+        evidence.append("Broader market context was unavailable.")
+
+    if event.news_count_24h:
+        evidence.append(
+            f"Recent news context found {event.news_count_24h} headline(s); sentiment hint is {event.news_sentiment_hint}."
+        )
+    else:
+        evidence.append("No recent news headline context was available.")
+
+    return evidence
