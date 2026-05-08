@@ -763,7 +763,7 @@ def test_autopilot_live_tick_waits_when_entry_execution_is_locked(monkeypatch) -
     assert state.last_action.startswith("entry_execution_locked")
 
 
-def test_autopilot_reports_below_minimum_buying_power(monkeypatch) -> None:
+def test_autopilot_reports_exits_checked_before_below_minimum_entry_skip(monkeypatch) -> None:
     settings.trading_mode = "live"
     settings.allow_live_trading = True
     settings.autopilot_allow_entries = True
@@ -803,7 +803,7 @@ def test_autopilot_reports_below_minimum_buying_power(monkeypatch) -> None:
 
     state = run_autopilot_once()
 
-    assert state.last_action == "entry_skipped:buying_power_below_$1.00_minimum"
+    assert state.last_action == "exit_checked_entry_skipped:buying_power_below_$1.00_minimum"
 
 
 def test_live_cycle_rejects_synthetic_demo_entry(monkeypatch) -> None:

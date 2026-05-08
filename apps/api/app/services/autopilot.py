@@ -73,7 +73,7 @@ def run_autopilot_once() -> AutopilotState:
     if result.risk_decision is None:
         if result.event.source == "portfolio-guard":
             return record_autopilot_heartbeat(
-                f"entry_skipped:buying_power_below_${settings.minimum_order_notional:.2f}_minimum"
+                f"exit_checked_entry_skipped:buying_power_below_${settings.minimum_order_notional:.2f}_minimum"
             )
         return record_autopilot_heartbeat("no_candidate")
 
