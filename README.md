@@ -174,8 +174,22 @@ strategy from buying into obvious friction where the spread alone can consume a
 1.5-3% daily target.
 
 The watchlist is controlled by `INVESTMENT_APP_ALLOWED_SYMBOLS`. The default
-example includes broad ETFs and large liquid names, but every symbol should be
+example now includes broad ETFs, mega caps, liquid sector leaders, and a
+controlled high-beta watchlist. `INVESTMENT_APP_MAX_SYMBOLS_PER_CYCLE` rotates
+large watchlists through bounded scan windows so the app can cover more assets
+without overloading Alpaca snapshot/news calls. Every symbol should still be
 treated as an operator-approved universe, not an automatic recommendation.
+
+The current strategy split is:
+
+- **Steady compounder lanes**: micro breakout, VWAP reclaim, opening range,
+  relative-volume spike, and pullback continuation. These seek cleaner small
+  wins with strict spread and duplicate-position controls.
+- **High-upside hunter lane**: `high_upside_momentum_v1`. This scans the broader
+  universe for stronger same-day moves, larger recent-volume expansion, cleaner
+  spreads, supportive market regime, and non-negative news context. It uses a
+  wider stop and larger take-profit target, but the same risk engine remains the
+  final gate.
 
 `Queue For Open` does not turn on extended-hours trading. It submits the same
 regular-session day market order path through the existing risk gate while the

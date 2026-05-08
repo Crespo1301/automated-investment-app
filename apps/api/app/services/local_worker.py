@@ -109,6 +109,10 @@ def run_single_cycle(
         breakout_threshold=settings.strategy_breakout_threshold,
         stop_loss_percent=settings.strategy_stop_loss_percent,
         take_profit_percent=settings.autopilot_take_profit_percent / 100,
+        high_upside_breakout_threshold=settings.high_upside_breakout_threshold,
+        high_upside_min_recent_volume_ratio=settings.high_upside_min_recent_volume_ratio,
+        high_upside_stop_loss_percent=settings.high_upside_stop_loss_percent,
+        high_upside_take_profit_percent=settings.high_upside_take_profit_percent,
         min_volume=settings.strategy_min_volume,
     )
 
@@ -254,7 +258,7 @@ def _get_cycle_events(
         return [event]
 
     if broker is not None and settings.trading_mode == "live" and settings.allow_live_trading:
-        return broker.list_watchlist_market_events(limits.allowed_symbols)
+        return broker.list_watchlist_market_events(_cycle_symbols(limits.allowed_symbols))
 
     return [
         MarketEvent(
@@ -266,6 +270,25 @@ def _get_cycle_events(
             volume=350_000,
         )
     ]
+
+
+def _cycle_symbols(symbols: list[str]) -> list[str]:
+    """Rotate broad universes so each tick scans a bounded symbol window.
+
+    Alpaca snapshots and news calls are relatively heavy when pointed at a very
+    large universe. Rotation lets the bot cover many symbols across the day
+    without trying to request the whole market every 30 seconds.
+    """
+
+    unique_symbols = list(dict.fromkeys(symbol.upper() for symbol in symbols))
+    limit = max(1, settings.max_symbols_per_cycle)
+    if len(unique_symbols) <= limit:
+        return unique_symbols
+
+    bucket = int(datetime.now(UTC).timestamp() // max(30, settings.autopilot_interval_seconds))
+    start = (bucket * limit) % len(unique_symbols)
+    rotated = unique_symbols[start:] + unique_symbols[:start]
+    return rotated[:limit]
 
 
 def _select_best_candidate(

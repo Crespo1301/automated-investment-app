@@ -43,6 +43,58 @@ export function AllocationBars({
   );
 }
 
+export function PositionPriceBoard({
+  positions,
+}: {
+  positions: BrokerPositionSummary[];
+}) {
+  return (
+    <div className="price-board">
+      {positions.length > 0 ? (
+        positions.map((position) => {
+          const averageEntry =
+            position.quantity > 0 && position.cost_basis > 0
+              ? position.cost_basis / position.quantity
+              : null;
+          const moveFromEntry =
+            averageEntry && averageEntry > 0 && position.current_price
+              ? (position.current_price - averageEntry) / averageEntry
+              : null;
+          return (
+            <article className="price-card" key={position.symbol}>
+              <div className="row-top">
+                <strong className="symbol">{position.symbol}</strong>
+                <span className={position.unrealized_pl >= 0 ? "positive" : "negative"}>
+                  {percentFormatter(position.unrealized_pl_percent)}
+                </span>
+              </div>
+              <div className="price-main">
+                {position.current_price != null ? currencyFormatter(position.current_price) : "No price"}
+              </div>
+              <div className="price-meta">
+                <span>Avg {averageEntry ? currencyFormatter(averageEntry) : "-"}</span>
+                <span>Value {currencyFormatter(position.market_value)}</span>
+                <span>Qty {position.quantity.toFixed(6)}</span>
+                <span className={position.unrealized_pl >= 0 ? "positive" : "negative"}>
+                  {currencyFormatter(position.unrealized_pl)}
+                </span>
+              </div>
+              <div className="micro-track" aria-label={`${position.symbol} move from average entry`}>
+                <span
+                  className={position.unrealized_pl >= 0 ? "micro-fill positive-fill" : "micro-fill negative-fill"}
+                  style={{ width: `${Math.min(100, Math.max(4, Math.abs(moveFromEntry ?? 0) * 500))}%` }}
+                />
+              </div>
+            </article>
+          );
+        })
+      ) : (
+        <div className="empty-state">No open positions to price yet.</div>
+      )}
+    </div>
+  );
+}
+
 export function StrategyFunnel({ strategies }: { strategies: StrategyUsageSummary[] }) {
   return (
     <div className="visual-grid">

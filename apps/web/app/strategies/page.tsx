@@ -36,6 +36,12 @@ const STRATEGY_LANES = [
     note: "Trend-aligned pullback recoveries off prior support.",
   },
   {
+    id: "high_upside_momentum_v1",
+    label: "High-upside momentum",
+    prior: 0.62,
+    note: "Riskier lane for stronger moves, larger volume expansion, supportive market regime, and cleaner spreads.",
+  },
+  {
     id: "micro_breakout_v1",
     label: "Micro breakout (starter)",
     prior: 0.66,

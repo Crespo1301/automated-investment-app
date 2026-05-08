@@ -44,6 +44,7 @@ STRATEGY_PRIORS = {
     "relative_volume_spike_v1": 0.71,
     "pullback_continuation_v1": 0.70,
     "micro_breakout_v1": 0.66,
+    "high_upside_momentum_v1": 0.62,
 }
 
 # Phrases that the evidence/setup scorers reward. Keys must match

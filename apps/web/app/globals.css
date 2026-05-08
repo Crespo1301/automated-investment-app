@@ -771,6 +771,59 @@ button {
   font-weight: 600;
 }
 
+.price-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.price-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+
+.price-main {
+  font-family: var(--mono);
+  font-size: clamp(1.35rem, 2vw, 1.9rem);
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.price-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.micro-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--panel);
+}
+
+.micro-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.positive-fill {
+  background: #4ade80;
+}
+
+.negative-fill {
+  background: #fca5a5;
+}
+
 .positive {
   color: #4ade80;
   font-weight: 600;

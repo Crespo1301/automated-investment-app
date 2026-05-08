@@ -158,6 +158,10 @@ class AggressiveStrategyEngine:
         breakout_threshold: float = 0.0025,
         stop_loss_percent: float = 0.025,
         take_profit_percent: float = 0.06,
+        high_upside_breakout_threshold: float = 0.012,
+        high_upside_min_recent_volume_ratio: float = 3.0,
+        high_upside_stop_loss_percent: float = 0.04,
+        high_upside_take_profit_percent: float = 0.12,
         min_volume: float = 25_000,
     ) -> None:
         self.allowed_symbols = {symbol.upper() for symbol in allowed_symbols}
@@ -165,6 +169,10 @@ class AggressiveStrategyEngine:
         self.breakout_threshold = breakout_threshold
         self.stop_loss_percent = stop_loss_percent
         self.take_profit_percent = take_profit_percent
+        self.high_upside_breakout_threshold = high_upside_breakout_threshold
+        self.high_upside_min_recent_volume_ratio = high_upside_min_recent_volume_ratio
+        self.high_upside_stop_loss_percent = high_upside_stop_loss_percent
+        self.high_upside_take_profit_percent = high_upside_take_profit_percent
         self.min_volume = min_volume
         self.micro_breakout = MicroBreakoutStrategy(
             allowed_symbols=allowed_symbols,
@@ -193,6 +201,7 @@ class AggressiveStrategyEngine:
             self._opening_range_breakout(event),
             self._relative_volume_spike(event),
             self._pullback_continuation(event),
+            self._high_upside_momentum(event),
         ]
         return [candidate for candidate in candidates if candidate is not None]
 
@@ -307,6 +316,56 @@ class AggressiveStrategyEngine:
             ],
         )
 
+    def _high_upside_momentum(self, event: MarketEvent) -> TradeCandidate | None:
+        """Seek larger upside setups across the broader operator-approved universe.
+
+        This lane is intentionally stricter than the steady compounder lanes:
+        it needs a stronger same-day move, real volume pressure, broad-market
+        support, and non-hostile news. The risk engine still owns sizing,
+        spread limits, duplicate prevention, PDT checks, and live permission.
+        """
+
+        symbol = event.symbol.upper()
+        if symbol not in self.allowed_symbols or event.previous_close is None:
+            return None
+
+        move = (event.price - event.previous_close) / event.previous_close
+        recent_ratio = self._recent_volume_ratio(event)
+        if move < self.high_upside_breakout_threshold:
+            return None
+        if recent_ratio < self.high_upside_min_recent_volume_ratio:
+            return None
+        if event.market_regime == "risk_off":
+            return None
+        if event.news_sentiment_hint == "negative":
+            return None
+        if event.spread_bps is not None and event.spread_bps > 50:
+            return None
+
+        range_boost = 0.0
+        if event.day_high is not None and event.day_low is not None and event.day_high > event.day_low:
+            range_position = (event.price - event.day_low) / (event.day_high - event.day_low)
+            range_boost = max(0.0, min(0.12, range_position * 0.12))
+
+        confidence_hint = min(
+            0.99,
+            0.64 + move * 12 + min(0.14, recent_ratio * 0.025) + range_boost,
+        )
+        return self._candidate(
+            event=event,
+            strategy_id="high_upside_momentum_v1",
+            confidence_hint=confidence_hint,
+            stop_loss_percent=self.high_upside_stop_loss_percent,
+            take_profit_percent=self.high_upside_take_profit_percent,
+            evidence=[
+                f"High-upside lane detected {move:.2%} move above previous close.",
+                f"Recent volume is {recent_ratio:.2f}x the recent average, above the {self.high_upside_min_recent_volume_ratio:.2f}x high-upside threshold.",
+                f"Broader market regime is {event.market_regime}.",
+                f"News sentiment hint is {event.news_sentiment_hint}.",
+                "Candidate created by high-upside momentum hunter lane.",
+            ],
+        )
+
     def _candidate(
         self,
         *,
@@ -314,9 +373,13 @@ class AggressiveStrategyEngine:
         strategy_id: str,
         confidence_hint: float,
         evidence: list[str],
+        stop_loss_percent: float | None = None,
+        take_profit_percent: float | None = None,
     ) -> TradeCandidate:
-        stop_price = event.price * (1 - self.stop_loss_percent)
-        take_profit_price = event.price * (1 + self.take_profit_percent)
+        stop_loss_percent = self.stop_loss_percent if stop_loss_percent is None else stop_loss_percent
+        take_profit_percent = self.take_profit_percent if take_profit_percent is None else take_profit_percent
+        stop_price = event.price * (1 - stop_loss_percent)
+        take_profit_price = event.price * (1 + take_profit_percent)
         return TradeCandidate(
             correlation_id=event.correlation_id,
             strategy_id=strategy_id,

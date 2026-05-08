@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import type { BrokerAccountStatus, MarketClockStatus } from "@/lib/contracts";
 import { currencyFormatter } from "@/lib/format";
+import { AutoRefresh } from "@/components/auto-refresh";
 
 const navItems = [
   { label: "Overview", href: "/" },
@@ -114,6 +115,7 @@ export function DashboardShell({
 
   return (
     <main className="app-frame">
+      <AutoRefresh intervalMs={15000} />
       <aside className="sidebar">
         <div className="brand-block">
           <div className="brand-mark">AI</div>

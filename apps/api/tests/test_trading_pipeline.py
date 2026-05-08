@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.core.config import configured_symbols
+from app.core.config import DEFAULT_ALLOWED_SYMBOLS, configured_symbols
 from app.core.config import settings
 from app.domain.trading import (
     AutopilotState,
@@ -38,6 +38,7 @@ from app.domain.trading import BrokerOrderReceipt, BrokerOrderSummary, BrokerPos
 def isolate_runtime_settings(tmp_path):
     original = {
         "trading_mode": settings.trading_mode,
+        "allowed_symbols": settings.allowed_symbols,
         "position_size_percent": settings.position_size_percent,
         "anthropic_api_key": settings.anthropic_api_key,
         "anthropic_model": settings.anthropic_model,
@@ -55,8 +56,13 @@ def isolate_runtime_settings(tmp_path):
         "strategy_breakout_threshold": settings.strategy_breakout_threshold,
         "strategy_min_volume": settings.strategy_min_volume,
         "strategy_stop_loss_percent": settings.strategy_stop_loss_percent,
+        "high_upside_breakout_threshold": settings.high_upside_breakout_threshold,
+        "high_upside_min_recent_volume_ratio": settings.high_upside_min_recent_volume_ratio,
+        "high_upside_stop_loss_percent": settings.high_upside_stop_loss_percent,
+        "high_upside_take_profit_percent": settings.high_upside_take_profit_percent,
         "ai_min_score": settings.ai_min_score,
         "max_entry_spread_bps": settings.max_entry_spread_bps,
+        "max_symbols_per_cycle": settings.max_symbols_per_cycle,
         "allow_demo_live_entries": settings.allow_demo_live_entries,
         "alpaca_paper": settings.alpaca_paper,
         "duplicate_order_lookback_minutes": settings.duplicate_order_lookback_minutes,
@@ -64,6 +70,7 @@ def isolate_runtime_settings(tmp_path):
         "runtime_data_dir": settings.runtime_data_dir,
     }
     settings.trading_mode = "paper"
+    settings.allowed_symbols = DEFAULT_ALLOWED_SYMBOLS
     settings.position_size_percent = 0.25
     settings.anthropic_api_key = None
     settings.anthropic_model = "claude-opus-4-7"
@@ -81,8 +88,13 @@ def isolate_runtime_settings(tmp_path):
     settings.strategy_breakout_threshold = 0.0025
     settings.strategy_min_volume = 25_000
     settings.strategy_stop_loss_percent = 0.025
+    settings.high_upside_breakout_threshold = 0.012
+    settings.high_upside_min_recent_volume_ratio = 3
+    settings.high_upside_stop_loss_percent = 0.04
+    settings.high_upside_take_profit_percent = 0.12
     settings.ai_min_score = 0.55
     settings.max_entry_spread_bps = 75
+    settings.max_symbols_per_cycle = 80
     settings.allow_demo_live_entries = False
     settings.alpaca_paper = True
     settings.duplicate_order_lookback_minutes = 390
@@ -98,6 +110,7 @@ def test_confirmed_watchlist_defaults_are_loaded() -> None:
 
     assert {"SPY", "QQQ", "SMH", "XLK", "NVDA", "AAPL", "MSFT", "AMZN"}.issubset(symbols)
     assert len(symbols) >= 30
+    assert {"PLTR", "COIN", "HOOD", "MSTR", "ARKK", "XBI"}.issubset(symbols)
 
 
 def test_starter_guardrails_match_confirmed_limits() -> None:
@@ -200,6 +213,44 @@ def test_aggressive_strategy_detects_vwap_reclaim() -> None:
     candidates = engine.evaluate_all(event)
 
     assert any(candidate.strategy_id == "vwap_reclaim_v1" for candidate in candidates)
+
+
+def test_aggressive_strategy_detects_high_upside_momentum() -> None:
+    engine = AggressiveStrategyEngine(
+        allowed_symbols=["PLTR"],
+        proposed_notional=2.5,
+        breakout_threshold=0.0025,
+        min_volume=25_000,
+        stop_loss_percent=0.025,
+        high_upside_breakout_threshold=0.012,
+        high_upside_min_recent_volume_ratio=3,
+        high_upside_stop_loss_percent=0.04,
+        high_upside_take_profit_percent=0.12,
+    )
+    event = MarketEvent(
+        source="test",
+        symbol="PLTR",
+        event_kind="bar",
+        price=25.75,
+        previous_close=25,
+        volume=150_000,
+        day_low=24.9,
+        day_high=25.8,
+        recent_volume=1_200_000,
+        average_recent_volume=30_000,
+        spread_bps=8,
+        market_regime="risk_on",
+        news_sentiment_hint="positive",
+    )
+
+    candidates = engine.evaluate_all(event)
+    candidate = next(
+        item for item in candidates if item.strategy_id == "high_upside_momentum_v1"
+    )
+
+    assert candidate.confidence_hint > 0.80
+    assert candidate.proposed_stop == 24.72
+    assert candidate.proposed_take_profit == 28.84
 
 
 def test_local_worker_approves_demo_candidate_in_paper_mode() -> None:

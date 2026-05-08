@@ -2,6 +2,7 @@ import {
   AllocationBars,
   CompoundingMatrix,
   PerformanceSparkline,
+  PositionPriceBoard,
 } from "@/components/analytics-visuals";
 import { DashboardShell } from "@/components/dashboard-shell";
 import {
@@ -88,6 +89,17 @@ export default async function PortfolioPage() {
           </p>
         </article>
       </section>
+
+      <article className="panel">
+        <div className="section-title">
+          <div>
+            <h2>Live Price Board</h2>
+            <p>Current broker position prices, average entry, value, and unrealized movement.</p>
+          </div>
+          <span className="state-pill state-info">broker snapshot</span>
+        </div>
+        <PositionPriceBoard positions={positions} />
+      </article>
 
       <article className="panel">
         <div className="section-title">

@@ -10,9 +10,10 @@ Repo role: internal investment and trading scaffold, lower weekly priority than 
 
 ## Claude Role Here
 
-- Use Claude for architecture, operator UX, visual systems, data visualization, naming, and planning only when this repo is the explicit target.
-- Let Codex handle implementation, test passes, repo organization, and GitHub closeout.
-- When taking over from Codex, preserve server actions, typed confirmation fields, kill-switch behavior, PDT guard copy, and route-level data fetching.
+- Claude may review and propose changes across the whole project, including trading logic, execution flow, dashboard UX, data visualization, naming, and planning, when this repo is the explicit target.
+- Claude should treat live-trading paths as real-money sensitive: propose or edit carefully, preserve deterministic risk gates, and explain any strategy or execution change in plain operator language.
+- Codex remains responsible for final implementation review, test/build passes, repo organization, GitHub closeout, and catching issues Claude missed.
+- When taking over from Codex, preserve server actions, typed confirmation fields, kill-switch behavior, PDT guard copy, spread guards, market-context scoring, and route-level data fetching.
 
 ## Working Notes
 
@@ -26,8 +27,9 @@ Repo role: internal investment and trading scaffold, lower weekly priority than 
 ## Current Scoring Posture
 
 - Scoring priority is Claude API, then OpenAI API, then deterministic local fallback.
-- The local fallback blends strategy prior, confidence hint, trigger evidence quality, setup structure, and stop distance.
-- Local fallback scores are capped because they do not include news, spread, volatility regime, order-book depth, or broader market confirmation.
+- The local fallback blends strategy prior, confidence hint, trigger evidence quality, setup structure, stop distance, and market-context health.
+- Market context now includes quote spread, top-of-book depth proxy, volatility regime, SPY/QQQ broader-market regime, and Alpaca headline sentiment when available.
+- The strategy stack is split between steadier small-win compounder lanes and a riskier `high_upside_momentum_v1` lane for larger-move candidates across a broader watchlist.
 - Do not remove deterministic explanations. Improve visual presentation without hiding why a trade was approved or rejected.
 
 ## Next Claude Design Pass
