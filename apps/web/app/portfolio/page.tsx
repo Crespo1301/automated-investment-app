@@ -98,7 +98,7 @@ export default async function PortfolioPage() {
           </div>
           <span className="state-pill state-info">broker snapshot</span>
         </div>
-        <PositionPriceBoard positions={positions} />
+        <PositionPriceBoard positions={positions} asOf={new Date().toISOString()} />
       </article>
 
       <article className="panel">

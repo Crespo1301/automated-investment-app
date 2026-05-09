@@ -45,9 +45,27 @@ export function AllocationBars({
 
 export function PositionPriceBoard({
   positions,
+  asOf,
 }: {
   positions: BrokerPositionSummary[];
+  // ISO timestamp of the reconciliation snapshot. Server passes
+  // ``new Date().toISOString()`` so the operator can see how stale a card is
+  // on a slow tape.
+  asOf?: string;
 }) {
+  const stampLabel = (() => {
+    if (!asOf) return null;
+    try {
+      return new Date(asOf).toLocaleTimeString();
+    } catch {
+      return null;
+    }
+  })();
+
+  // Visual reference for the move-from-entry micro-track. Anything beyond
+  // ±5% saturates the bar. Linear, data-honest, no magic 500 multiplier.
+  const PRICE_BOARD_REFERENCE = 0.05;
+
   return (
     <div className="price-board">
       {positions.length > 0 ? (
@@ -60,6 +78,13 @@ export function PositionPriceBoard({
             averageEntry && averageEntry > 0 && position.current_price
               ? (position.current_price - averageEntry) / averageEntry
               : null;
+          const trackWidth =
+            moveFromEntry == null
+              ? 4
+              : Math.min(
+                  100,
+                  Math.max(4, (Math.abs(moveFromEntry) / PRICE_BOARD_REFERENCE) * 100),
+                );
           return (
             <article className="price-card" key={position.symbol}>
               <div className="row-top">
@@ -71,6 +96,11 @@ export function PositionPriceBoard({
               <div className="price-main">
                 {position.current_price != null ? currencyFormatter(position.current_price) : "No price"}
               </div>
+              {stampLabel ? (
+                <div className="price-stamp" aria-label="Snapshot age">
+                  as of {stampLabel}
+                </div>
+              ) : null}
               <div className="price-meta">
                 <span>Avg {averageEntry ? currencyFormatter(averageEntry) : "-"}</span>
                 <span>Value {currencyFormatter(position.market_value)}</span>
@@ -79,10 +109,10 @@ export function PositionPriceBoard({
                   {currencyFormatter(position.unrealized_pl)}
                 </span>
               </div>
-              <div className="micro-track" aria-label={`${position.symbol} move from average entry`}>
+              <div className="micro-track" aria-label={`${position.symbol} move vs ±5% reference`}>
                 <span
                   className={position.unrealized_pl >= 0 ? "micro-fill positive-fill" : "micro-fill negative-fill"}
-                  style={{ width: `${Math.min(100, Math.max(4, Math.abs(moveFromEntry ?? 0) * 500))}%` }}
+                  style={{ width: `${trackWidth}%` }}
                 />
               </div>
             </article>

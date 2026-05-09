@@ -162,6 +162,9 @@ class AggressiveStrategyEngine:
         high_upside_min_recent_volume_ratio: float = 3.0,
         high_upside_stop_loss_percent: float = 0.04,
         high_upside_take_profit_percent: float = 0.12,
+        high_upside_max_spread_bps: float = 50.0,
+        high_upside_require_known_market_regime: bool = True,
+        high_upside_require_known_news_sentiment: bool = False,
         min_volume: float = 25_000,
     ) -> None:
         self.allowed_symbols = {symbol.upper() for symbol in allowed_symbols}
@@ -173,6 +176,9 @@ class AggressiveStrategyEngine:
         self.high_upside_min_recent_volume_ratio = high_upside_min_recent_volume_ratio
         self.high_upside_stop_loss_percent = high_upside_stop_loss_percent
         self.high_upside_take_profit_percent = high_upside_take_profit_percent
+        self.high_upside_max_spread_bps = high_upside_max_spread_bps
+        self.high_upside_require_known_market_regime = high_upside_require_known_market_regime
+        self.high_upside_require_known_news_sentiment = high_upside_require_known_news_sentiment
         self.min_volume = min_volume
         self.micro_breakout = MicroBreakoutStrategy(
             allowed_symbols=allowed_symbols,
@@ -323,6 +329,20 @@ class AggressiveStrategyEngine:
         it needs a stronger same-day move, real volume pressure, broad-market
         support, and non-hostile news. The risk engine still owns sizing,
         spread limits, duplicate prevention, PDT checks, and live permission.
+
+        Hard gates (block unconditionally):
+          - move < ``high_upside_breakout_threshold``
+          - recent volume ratio < ``high_upside_min_recent_volume_ratio``
+          - market regime is ``risk_off``
+          - news sentiment hint is ``negative``
+          - quote spread > ``high_upside_max_spread_bps`` (when known)
+
+        Soft gates (config-toggleable, default to caution):
+          - market regime is ``unknown`` and
+            ``high_upside_require_known_market_regime`` is True (default)
+          - news sentiment is ``unknown`` and
+            ``high_upside_require_known_news_sentiment`` is True (default False
+            because news provider may be unfunded; flip to True once available).
         """
 
         symbol = event.symbol.upper()
@@ -337,19 +357,36 @@ class AggressiveStrategyEngine:
             return None
         if event.market_regime == "risk_off":
             return None
+        if (
+            event.market_regime == "unknown"
+            and self.high_upside_require_known_market_regime
+        ):
+            return None
         if event.news_sentiment_hint == "negative":
             return None
-        if event.spread_bps is not None and event.spread_bps > 50:
+        if (
+            event.news_sentiment_hint == "unknown"
+            and self.high_upside_require_known_news_sentiment
+        ):
+            return None
+        if event.spread_bps is not None and event.spread_bps > self.high_upside_max_spread_bps:
             return None
 
         range_boost = 0.0
         if event.day_high is not None and event.day_low is not None and event.day_high > event.day_low:
             range_position = (event.price - event.day_low) / (event.day_high - event.day_low)
-            range_boost = max(0.0, min(0.12, range_position * 0.12))
+            range_boost = max(0.0, min(0.10, range_position * 0.10))
 
+        # Softened coefficients so a weak setup at the threshold doesn't peg
+        # near 1.0. A 1.2% move + 3.0x volume + mid-range now scores ~0.74,
+        # not ~0.98 — leaves headroom for genuinely strong setups.
+        # (move - threshold) excess gives more room above the floor, so the
+        # confidence rewards how far past the gate the setup is.
+        excess_move = max(0.0, move - self.high_upside_breakout_threshold)
+        excess_volume = max(0.0, recent_ratio - self.high_upside_min_recent_volume_ratio)
         confidence_hint = min(
-            0.99,
-            0.64 + move * 12 + min(0.14, recent_ratio * 0.025) + range_boost,
+            0.95,
+            0.55 + excess_move * 6 + min(0.10, excess_volume * 0.03) + range_boost,
         )
         return self._candidate(
             event=event,
@@ -395,6 +432,15 @@ class AggressiveStrategyEngine:
         )
 
     def _recent_volume_ratio(self, event: MarketEvent) -> float:
+        """Return recent volume divided by the recent average.
+
+        A return of 2.0 means recent volume is 2x the recent average.
+        Previously this divided by ``average_recent_volume * 10``, which made
+        every "ratio" off by 10x — a 1.8 threshold actually required 18x and
+        the high-upside 3.0 threshold required 30x. Evidence strings still
+        printed the off-by-10x value, which lied to the operator.
+        """
+
         if (
             event.recent_volume is None
             or event.average_recent_volume is None
@@ -402,7 +448,7 @@ class AggressiveStrategyEngine:
         ):
             return 1.0
 
-        return event.recent_volume / max(event.average_recent_volume * 10, 1)
+        return event.recent_volume / event.average_recent_volume
 
     def _has_volume_pressure(self, event: MarketEvent) -> bool:
         return max(event.volume, event.recent_volume or 0) >= self.min_volume

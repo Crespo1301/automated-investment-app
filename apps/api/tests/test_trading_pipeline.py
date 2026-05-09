@@ -60,6 +60,11 @@ def isolate_runtime_settings(tmp_path):
         "high_upside_min_recent_volume_ratio": settings.high_upside_min_recent_volume_ratio,
         "high_upside_stop_loss_percent": settings.high_upside_stop_loss_percent,
         "high_upside_take_profit_percent": settings.high_upside_take_profit_percent,
+        "high_upside_max_spread_bps": settings.high_upside_max_spread_bps,
+        "high_upside_require_known_market_regime": settings.high_upside_require_known_market_regime,
+        "high_upside_require_known_news_sentiment": settings.high_upside_require_known_news_sentiment,
+        "max_buying_power_utilization_per_trade": settings.max_buying_power_utilization_per_trade,
+        "cash_reserve_percent_of_portfolio": settings.cash_reserve_percent_of_portfolio,
         "ai_min_score": settings.ai_min_score,
         "max_entry_spread_bps": settings.max_entry_spread_bps,
         "max_symbols_per_cycle": settings.max_symbols_per_cycle,
@@ -92,6 +97,11 @@ def isolate_runtime_settings(tmp_path):
     settings.high_upside_min_recent_volume_ratio = 3
     settings.high_upside_stop_loss_percent = 0.04
     settings.high_upside_take_profit_percent = 0.12
+    settings.high_upside_max_spread_bps = 50
+    settings.high_upside_require_known_market_regime = True
+    settings.high_upside_require_known_news_sentiment = False
+    settings.max_buying_power_utilization_per_trade = 0.5
+    settings.cash_reserve_percent_of_portfolio = 0.10
     settings.ai_min_score = 0.55
     settings.max_entry_spread_bps = 75
     settings.max_symbols_per_cycle = 80
@@ -213,6 +223,220 @@ def test_aggressive_strategy_detects_vwap_reclaim() -> None:
     candidates = engine.evaluate_all(event)
 
     assert any(candidate.strategy_id == "vwap_reclaim_v1" for candidate in candidates)
+
+
+def test_target_notional_respects_buying_power_utilization_cap() -> None:
+    """Per-trade sizing must never exceed the utilization ceiling, even if
+    the percent-of-portfolio target is higher."""
+
+    from app.services.local_worker import _calculate_target_notional
+
+    target = _calculate_target_notional(
+        portfolio_value=20,
+        buying_power=4,
+        target_position_percent=0.25,
+        max_buying_power_utilization=0.5,
+        cash_reserve_percent_of_portfolio=0,
+    )
+    # desired = 20 * 0.25 = 5.0; ceiling = 4 * 0.5 = 2.0; min = 2.0.
+    assert target == 2.0
+
+
+def test_target_notional_honors_portfolio_scaled_cash_reserve() -> None:
+    """The cash reserve scales with portfolio value so the buffer doesn't
+    cliff at Alpaca's $1 minimum as the portfolio grows."""
+
+    from app.services.local_worker import _calculate_target_notional
+
+    # Small account: 10% of $20 = $2 reserve.
+    small = _calculate_target_notional(
+        portfolio_value=20,
+        buying_power=10,
+        target_position_percent=0.25,
+        max_buying_power_utilization=0.5,
+        cash_reserve_percent_of_portfolio=0.10,
+    )
+    # spendable = 10 - 2 = 8; ceiling = 8 * 0.5 = 4.0; desired = 5.0; min = 4.0.
+    assert small == 4.0
+
+    # Larger account: same 10% reserve grows with portfolio.
+    large = _calculate_target_notional(
+        portfolio_value=1000,
+        buying_power=500,
+        target_position_percent=0.25,
+        max_buying_power_utilization=0.5,
+        cash_reserve_percent_of_portfolio=0.10,
+    )
+    # reserve = 1000 * 0.10 = 100; spendable = 500 - 100 = 400; ceiling = 200;
+    # desired = 250; min = 200.
+    assert large == 200.0
+
+
+def test_target_notional_never_eats_all_remaining_buying_power() -> None:
+    """Simulate consecutive entries on a small account. The cash reserve
+    must be preserved every step. Sizing decays as buying power drops,
+    falling back to ``spendable`` when the utilization ceiling alone would
+    block a trade — but never touching the reserve."""
+
+    from app.services.local_worker import _calculate_target_notional
+
+    portfolio_value = 10.0
+    buying_power = 10.0
+    bp_before_each: list[float] = []
+    sizes: list[float] = []
+    for _ in range(6):
+        bp_before_each.append(buying_power)
+        size = _calculate_target_notional(
+            portfolio_value=portfolio_value,
+            buying_power=buying_power,
+            target_position_percent=0.25,
+            max_buying_power_utilization=0.5,
+            cash_reserve_percent_of_portfolio=0.10,
+        )
+        sizes.append(size)
+        buying_power -= size
+
+    reserve = portfolio_value * 0.10
+    for size, bp_at_entry in zip(sizes, bp_before_each):
+        spendable_at_entry = max(0.0, bp_at_entry - reserve)
+        # Hard invariant: no trade ever consumes more than spendable
+        # buying power (i.e. the cash reserve is never touched).
+        assert size <= spendable_at_entry + 1e-9, (size, spendable_at_entry)
+    # Buying power never falls below the reserve.
+    assert buying_power >= reserve - 1e-9
+    # At least one late trade stepped down from the initial $2.50 target.
+    assert min(sizes) < sizes[0]
+
+
+def test_target_notional_falls_back_to_spendable_when_ceiling_blocks() -> None:
+    """When the utilization ceiling alone would push the trade below $1
+    but spendable buying power is still ≥ $1, the trade should size at the
+    full spendable rather than being skipped. The cash reserve must remain
+    intact."""
+
+    from app.services.local_worker import _calculate_target_notional
+
+    # portfolio=$10, BP=$2, reserve=$1, spendable=$1, ceiling=$0.50.
+    # Without the fallback this would be $0.50 (skipped <$1).
+    # With the fallback: trade sizes at $1 (the full spendable). Reserve
+    # untouched.
+    target = _calculate_target_notional(
+        portfolio_value=10,
+        buying_power=2,
+        target_position_percent=0.25,
+        max_buying_power_utilization=0.5,
+        cash_reserve_percent_of_portfolio=0.10,
+    )
+    assert target == 1.0
+
+
+def test_target_notional_skips_when_spendable_below_one_dollar() -> None:
+    """If spendable buying power is itself below the $1 minimum, the trade
+    is properly skipped — no fallback can save it."""
+
+    from app.services.local_worker import _calculate_target_notional
+
+    # portfolio=$10, BP=$1.50, reserve=$1, spendable=$0.50.
+    target = _calculate_target_notional(
+        portfolio_value=10,
+        buying_power=1.5,
+        target_position_percent=0.25,
+        max_buying_power_utilization=0.5,
+        cash_reserve_percent_of_portfolio=0.10,
+    )
+    assert target < 1.0
+
+
+def _high_upside_engine() -> AggressiveStrategyEngine:
+    return AggressiveStrategyEngine(
+        allowed_symbols=["PLTR"],
+        proposed_notional=2.5,
+        breakout_threshold=0.0025,
+        min_volume=25_000,
+        stop_loss_percent=0.025,
+        high_upside_breakout_threshold=0.012,
+        high_upside_min_recent_volume_ratio=3,
+        high_upside_stop_loss_percent=0.04,
+        high_upside_take_profit_percent=0.12,
+        high_upside_max_spread_bps=50,
+        high_upside_require_known_market_regime=True,
+        high_upside_require_known_news_sentiment=False,
+    )
+
+
+def _high_upside_event(**overrides):
+    base = dict(
+        source="test",
+        symbol="PLTR",
+        event_kind="bar",
+        price=25.75,
+        previous_close=25,
+        volume=150_000,
+        day_low=24.9,
+        day_high=25.8,
+        recent_volume=120_000,
+        average_recent_volume=30_000,  # ratio = 4x with the corrected math
+        spread_bps=8,
+        market_regime="risk_on",
+        news_sentiment_hint="positive",
+    )
+    base.update(overrides)
+    return MarketEvent(**base)
+
+
+def _has_high_upside(candidates) -> bool:
+    return any(c.strategy_id == "high_upside_momentum_v1" for c in candidates)
+
+
+def test_high_upside_blocks_when_market_regime_risk_off() -> None:
+    engine = _high_upside_engine()
+    event = _high_upside_event(market_regime="risk_off")
+    assert not _has_high_upside(engine.evaluate_all(event))
+
+
+def test_high_upside_blocks_when_market_regime_unknown_by_default() -> None:
+    engine = _high_upside_engine()
+    event = _high_upside_event(market_regime="unknown")
+    assert not _has_high_upside(engine.evaluate_all(event))
+
+
+def test_high_upside_blocks_when_news_sentiment_negative() -> None:
+    engine = _high_upside_engine()
+    event = _high_upside_event(news_sentiment_hint="negative")
+    assert not _has_high_upside(engine.evaluate_all(event))
+
+
+def test_high_upside_blocks_when_spread_above_configured_limit() -> None:
+    engine = _high_upside_engine()
+    event = _high_upside_event(spread_bps=51)
+    assert not _has_high_upside(engine.evaluate_all(event))
+
+
+def test_high_upside_volume_threshold_uses_corrected_ratio() -> None:
+    """Corrected ``_recent_volume_ratio`` should be ``recent / average``.
+
+    A recent_volume of 4x average must pass a 3x threshold; without the bug
+    fix this would have required 30x.
+    """
+
+    engine = _high_upside_engine()
+    event = _high_upside_event(recent_volume=120_000, average_recent_volume=30_000)
+    assert _has_high_upside(engine.evaluate_all(event))
+
+
+def test_high_upside_confidence_no_longer_pegs_near_one() -> None:
+    """At-threshold setups should score in the 0.55–0.85 band, not 0.97+."""
+
+    engine = _high_upside_engine()
+    event = _high_upside_event(
+        price=25.30,  # 1.2% move = exactly the threshold
+        recent_volume=90_000,
+        average_recent_volume=30_000,  # 3x = threshold
+    )
+    candidate = next(
+        c for c in engine.evaluate_all(event) if c.strategy_id == "high_upside_momentum_v1"
+    )
+    assert 0.50 <= candidate.confidence_hint <= 0.85
 
 
 def test_aggressive_strategy_detects_high_upside_momentum() -> None:

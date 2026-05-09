@@ -113,6 +113,9 @@ def run_single_cycle(
         high_upside_min_recent_volume_ratio=settings.high_upside_min_recent_volume_ratio,
         high_upside_stop_loss_percent=settings.high_upside_stop_loss_percent,
         high_upside_take_profit_percent=settings.high_upside_take_profit_percent,
+        high_upside_max_spread_bps=settings.high_upside_max_spread_bps,
+        high_upside_require_known_market_regime=settings.high_upside_require_known_market_regime,
+        high_upside_require_known_news_sentiment=settings.high_upside_require_known_news_sentiment,
         min_volume=settings.strategy_min_volume,
     )
 
@@ -278,6 +281,12 @@ def _cycle_symbols(symbols: list[str]) -> list[str]:
     Alpaca snapshots and news calls are relatively heavy when pointed at a very
     large universe. Rotation lets the bot cover many symbols across the day
     without trying to request the whole market every 30 seconds.
+
+    Buckets advance every ``max(30, autopilot_interval_seconds)`` seconds. Each
+    bucket also rotates the *order* within the window via a stride offset so
+    symbols don't always get scanned in the same fixed sequence — the symbol
+    at index 0 isn't permanently first inside its bucket. This reduces bias if
+    a slow Alpaca response truncates the bucket mid-scan.
     """
 
     unique_symbols = list(dict.fromkeys(symbol.upper() for symbol in symbols))
@@ -287,8 +296,12 @@ def _cycle_symbols(symbols: list[str]) -> list[str]:
 
     bucket = int(datetime.now(UTC).timestamp() // max(30, settings.autopilot_interval_seconds))
     start = (bucket * limit) % len(unique_symbols)
-    rotated = unique_symbols[start:] + unique_symbols[:start]
-    return rotated[:limit]
+    window = unique_symbols[start:] + unique_symbols[:start]
+    selected = window[:limit]
+    # Stride-shuffle the selected window so first-in-window position rotates
+    # bucket-to-bucket even when the same symbols are being scanned.
+    stride_offset = bucket % limit
+    return selected[stride_offset:] + selected[:stride_offset]
 
 
 def _select_best_candidate(
@@ -386,8 +399,43 @@ def _calculate_target_notional(
     portfolio_value: float,
     buying_power: float,
     target_position_percent: float,
+    max_buying_power_utilization: float | None = None,
+    cash_reserve_percent_of_portfolio: float | None = None,
 ) -> float:
-    """Size each new entry as a percent of the current portfolio."""
+    """Size each new entry as a percent of the current portfolio.
+
+    Three constraints, narrowest wins:
+
+    1. ``portfolio_value × target_position_percent`` — the per-trade target.
+    2. ``(buying_power - portfolio_value × cash_reserve_percent_of_portfolio)
+       × max_buying_power_utilization`` — keeps a portfolio-scaled cash
+       buffer untouched and prevents any single trade from eating more than
+       a fraction of remaining buying power. Defaults are read from
+       settings when omitted, so legacy callers keep working unchanged.
+    3. ``$1`` Alpaca fractional minimum — anything below skips the trade.
+    """
+
+    if max_buying_power_utilization is None:
+        max_buying_power_utilization = settings.max_buying_power_utilization_per_trade
+    if cash_reserve_percent_of_portfolio is None:
+        cash_reserve_percent_of_portfolio = settings.cash_reserve_percent_of_portfolio
 
     desired_notional = max(1.0, portfolio_value * target_position_percent)
-    return round(min(desired_notional, buying_power), 2)
+    reserve_dollars = max(0.0, portfolio_value * max(0.0, cash_reserve_percent_of_portfolio))
+    spendable = max(0.0, buying_power - reserve_dollars)
+    utilization = max(0.0, min(1.0, max_buying_power_utilization))
+    per_trade_ceiling = spendable * utilization
+
+    raw = min(desired_notional, per_trade_ceiling)
+    # Fallback: if the per-trade utilization ceiling alone would push the
+    # trade below Alpaca's $1 fractional minimum, but the full *spendable*
+    # buying power (above the cash reserve) is still ≥ $1, size the trade
+    # at the full spendable instead of skipping. Better to deploy one
+    # remaining trade than hard-stop. The cash reserve is preserved
+    # because we still subtract it before computing spendable.
+    if raw < 1.0 and spendable >= 1.0:
+        raw = min(desired_notional, spendable)
+
+    # Floor to two decimals (do not round up) — the spending cap must never
+    # be overshot by penny-rounding.
+    return int(raw * 100) / 100

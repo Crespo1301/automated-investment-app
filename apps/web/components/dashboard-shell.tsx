@@ -115,7 +115,7 @@ export function DashboardShell({
 
   return (
     <main className="app-frame">
-      <AutoRefresh intervalMs={15000} />
+      <AutoRefresh intervalMs={30000} />
       <aside className="sidebar">
         <div className="brand-block">
           <div className="brand-mark">AI</div>

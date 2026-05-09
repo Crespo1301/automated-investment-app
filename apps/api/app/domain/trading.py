@@ -16,6 +16,25 @@ TradingMode = Literal["paper", "live"]
 TradeSide = Literal["buy", "sell"]
 RiskState = Literal["approved", "rejected"]
 ScoreProvenance = Literal["anthropic", "openai", "local"]
+
+# Options primitives. Level 1 (Alpaca approval today) allows only
+# ``sell_to_open`` of ``covered_call_v1`` and ``cash_secured_put_v1``.
+# Level 2 will add ``long_call_v1`` / ``long_put_v1`` (``buy_to_open``).
+# Level 3 adds multi-leg spreads (out of scope for the foundation).
+OptionContractType = Literal["call", "put"]
+OptionAction = Literal[
+    "buy_to_open",
+    "sell_to_open",
+    "buy_to_close",
+    "sell_to_close",
+]
+OptionsStrategyId = Literal[
+    "covered_call_v1",
+    "cash_secured_put_v1",
+    "long_call_v1",
+    "long_put_v1",
+]
+OptionsTradingLevel = Literal[0, 1, 2, 3]
 VolatilityRegime = Literal["unknown", "calm", "normal", "elevated", "extreme"]
 MarketRegime = Literal["unknown", "risk_on", "neutral", "risk_off"]
 NewsSentimentHint = Literal["unknown", "positive", "neutral", "negative"]
@@ -416,3 +435,118 @@ class AuditEvent(BaseModel):
     event_type: str
     payload: dict[str, Any]
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+# ---------------------------------------------------------------------------
+# Options primitives
+# ---------------------------------------------------------------------------
+#
+# These models are deliberately separate from ``TradeCandidate`` /
+# ``ExecutionIntent`` so the equity pipeline stays untouched. The options
+# pipeline will reuse the same audit, kill-switch, and PDT plumbing once a
+# broker adapter populates option chains and submits option orders.
+
+
+class OptionContract(BaseModel):
+    """One listed option contract from the chain.
+
+    ``occ_symbol`` follows the OCC standard format (e.g.
+    ``AAPL250620C00230000``) and is what Alpaca submits orders against.
+    Greeks are optional because the broker may not always provide them.
+    """
+
+    occ_symbol: str
+    underlying: str
+    expiration: str  # ISO date "YYYY-MM-DD"
+    strike: float
+    contract_type: OptionContractType
+    multiplier: int = 100
+    bid: float | None = None
+    ask: float | None = None
+    last: float | None = None
+    open_interest: int | None = None
+    volume: int | None = None
+    delta: float | None = None
+    implied_volatility: float | None = None
+
+
+class OptionsChainSnapshot(BaseModel):
+    """Filtered option chain for a single underlying at a moment in time."""
+
+    underlying: str
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    underlying_price: float | None = None
+    contracts: list[OptionContract]
+
+
+class OptionsTradeCandidate(BaseModel):
+    """Strategy-created options candidate before risk review.
+
+    For Level 1 strategies (``covered_call_v1``, ``cash_secured_put_v1``)
+    the action is always ``sell_to_open``. ``expected_credit`` is the
+    premium received per contract (mid-price × multiplier × contracts).
+    ``collateral_required`` is the dollar collateral the broker will
+    encumber:
+
+      - covered call: ``contracts × 100 × underlying_price`` worth of
+        already-held shares (cash impact = $0; positions are encumbered).
+      - cash-secured put: ``contracts × 100 × strike`` cash held aside.
+    """
+
+    candidate_id: str = Field(default_factory=lambda: new_id("optcand"))
+    correlation_id: str
+    strategy_id: OptionsStrategyId
+    contract: OptionContract
+    action: OptionAction
+    contracts: int = Field(ge=1)
+    expected_credit: float | None = None
+    expected_debit: float | None = None
+    collateral_required: float
+    underlying_position_quantity: float = 0.0
+    trigger_evidence: list[str]
+    confidence_hint: float = Field(ge=0, le=1)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class OptionsRiskDecision(BaseModel):
+    """Risk-engine output for an options candidate."""
+
+    decision_id: str = Field(default_factory=lambda: new_id("optrisk"))
+    state: RiskState
+    candidate_id: str
+    approved_contracts: int = 0
+    approved_collateral: float = 0.0
+    reasons: list[str]
+    evaluated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class OptionsExecutionIntent(BaseModel):
+    """Final broker-facing options instruction after risk approval."""
+
+    intent_id: str = Field(default_factory=lambda: new_id("optintent"))
+    candidate_id: str
+    occ_symbol: str
+    underlying: str
+    action: OptionAction
+    contracts: int
+    order_type: Literal["market", "limit"] = "limit"
+    limit_price: float | None = None
+    time_in_force: Literal["day", "gtc"] = "day"
+    mode: TradingMode
+    client_order_id: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class OptionsRiskLimits(BaseModel):
+    """Operator-defined options guardrails (level, eligibility, gates)."""
+
+    enabled: bool = False
+    max_level: OptionsTradingLevel = 1
+    allowed_underlyings: list[str]
+    min_open_interest: int = 500
+    max_bid_ask_spread_percent: float = 0.05
+    target_dte_min: int = 30
+    target_dte_max: int = 45
+    min_premium_to_collateral_ratio: float = 0.005
+    max_open_contracts: int = 2
+    cash_reserve_percent_of_portfolio: float = 0.10
