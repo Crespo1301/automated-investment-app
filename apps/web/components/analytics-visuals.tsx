@@ -168,7 +168,7 @@ const PROVIDER_PROFILES: Record<string, { label: string; subtitle: string }> = {
   },
   local: {
     label: "Deterministic local",
-    subtitle: "Always-on fallback - capped 0.88",
+    subtitle: "Always-on fallback - capped 0.80",
   },
   "claude-3-5-sonnet-20241022": {
     label: "Anthropic Claude",
@@ -180,7 +180,7 @@ const PROVIDER_PROFILES: Record<string, { label: string; subtitle: string }> = {
   },
   "local-manual": {
     label: "Deterministic local",
-    subtitle: "Always-on fallback - capped 0.88",
+    subtitle: "Always-on fallback - capped 0.80",
   },
   "local-manual-anthropic-fallback": {
     label: "Deterministic local",
@@ -289,7 +289,7 @@ export function ProviderPosture({
     {
       tier: "Tier 3",
       label: "Deterministic local",
-      subtitle: "Always-on - capped 0.88 - no external context",
+      subtitle: "Always-on - capped 0.80 - no external context",
       count: localCount,
       state: "state-healthy",
       stateLabel: "Live fallback",

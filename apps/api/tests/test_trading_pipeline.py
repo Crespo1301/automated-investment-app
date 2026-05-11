@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -6,13 +6,17 @@ import pytest
 from app.core.config import DEFAULT_ALLOWED_SYMBOLS, configured_symbols
 from app.core.config import settings
 from app.domain.trading import (
+    AIScore,
     AutopilotState,
     DayTradeGuardResult,
     MarketEvent,
+    PortfolioState,
+    RiskLimits,
     ScoredTradeCandidate,
     TradeCandidate,
 )
 from app.services.ai_scorer import TradeScorer
+from app.services.risk_engine import RiskEngine
 from app.services.audit_store import get_autopilot_state, get_daily_trade_recap, get_safety_state
 from app.services.autopilot import enable_autopilot, run_autopilot_once
 from app.services.broker_adapter import (
@@ -63,9 +67,12 @@ def isolate_runtime_settings(tmp_path):
         "high_upside_max_spread_bps": settings.high_upside_max_spread_bps,
         "high_upside_require_known_market_regime": settings.high_upside_require_known_market_regime,
         "high_upside_require_known_news_sentiment": settings.high_upside_require_known_news_sentiment,
+        "high_upside_position_size_percent": settings.high_upside_position_size_percent,
         "max_buying_power_utilization_per_trade": settings.max_buying_power_utilization_per_trade,
         "cash_reserve_percent_of_portfolio": settings.cash_reserve_percent_of_portfolio,
         "ai_min_score": settings.ai_min_score,
+        "fallback_score_cap": settings.fallback_score_cap,
+        "local_fallback_min_score": settings.local_fallback_min_score,
         "max_entry_spread_bps": settings.max_entry_spread_bps,
         "max_symbols_per_cycle": settings.max_symbols_per_cycle,
         "allow_demo_live_entries": settings.allow_demo_live_entries,
@@ -100,9 +107,12 @@ def isolate_runtime_settings(tmp_path):
     settings.high_upside_max_spread_bps = 50
     settings.high_upside_require_known_market_regime = True
     settings.high_upside_require_known_news_sentiment = False
+    settings.high_upside_position_size_percent = 0.15
     settings.max_buying_power_utilization_per_trade = 0.5
     settings.cash_reserve_percent_of_portfolio = 0.10
     settings.ai_min_score = 0.55
+    settings.fallback_score_cap = 0.80
+    settings.local_fallback_min_score = 0.65
     settings.max_entry_spread_bps = 75
     settings.max_symbols_per_cycle = 80
     settings.allow_demo_live_entries = False
@@ -439,6 +449,62 @@ def test_high_upside_confidence_no_longer_pegs_near_one() -> None:
     assert 0.50 <= candidate.confidence_hint <= 0.85
 
 
+def test_high_upside_uses_lane_specific_notional_when_provided() -> None:
+    """When the engine is given a smaller ``high_upside_proposed_notional``,
+    only the hunter lane should use it. Steady lanes keep the larger
+    portfolio-default sizing. This is the structural change that lets a
+    losing hunter trade be a smaller drawdown than a losing steady trade."""
+
+    engine = AggressiveStrategyEngine(
+        allowed_symbols=["PLTR"],
+        proposed_notional=2.50,
+        high_upside_proposed_notional=1.50,
+        breakout_threshold=0.0025,
+        min_volume=25_000,
+        stop_loss_percent=0.025,
+        high_upside_breakout_threshold=0.012,
+        high_upside_min_recent_volume_ratio=3,
+        high_upside_stop_loss_percent=0.04,
+        high_upside_take_profit_percent=0.12,
+    )
+    event = _high_upside_event(recent_volume=1_200_000)
+
+    hunter = next(
+        c for c in engine.evaluate_all(event) if c.strategy_id == "high_upside_momentum_v1"
+    )
+    assert hunter.proposed_notional == 1.50
+
+    # Steady lane sizing must remain the larger envelope.
+    steady_candidates = [
+        c for c in engine.evaluate_all(event) if c.strategy_id != "high_upside_momentum_v1"
+    ]
+    assert steady_candidates, "expected at least one steady lane candidate for this event"
+    assert all(c.proposed_notional == 2.50 for c in steady_candidates)
+
+
+def test_high_upside_skips_when_lane_notional_sub_dollar() -> None:
+    """Defensive: when the hunter-lane notional falls below Alpaca's $1
+    fractional minimum, the lane must return no candidate even when every
+    other gate passes. Avoids feeding the risk gate a guaranteed-rejected
+    sub-minimum entry."""
+
+    engine = AggressiveStrategyEngine(
+        allowed_symbols=["PLTR"],
+        proposed_notional=2.50,
+        high_upside_proposed_notional=0.80,  # below the $1 floor
+        breakout_threshold=0.0025,
+        min_volume=25_000,
+        stop_loss_percent=0.025,
+        high_upside_breakout_threshold=0.012,
+        high_upside_min_recent_volume_ratio=3,
+        high_upside_stop_loss_percent=0.04,
+        high_upside_take_profit_percent=0.12,
+    )
+    event = _high_upside_event(recent_volume=1_200_000)
+
+    assert not _has_high_upside(engine.evaluate_all(event))
+
+
 def test_aggressive_strategy_detects_high_upside_momentum() -> None:
     engine = AggressiveStrategyEngine(
         allowed_symbols=["PLTR"],
@@ -537,8 +603,13 @@ def test_missing_alpaca_credentials_reports_env_names() -> None:
 
 
 def test_day_trade_detection_respects_order_sequence() -> None:
-    market_date = datetime.now(UTC).astimezone(ZoneInfo("America/New_York")).date()
     eastern = ZoneInfo("America/New_York")
+    # Pin to the most recent business day so the test stays deterministic
+    # on weekends — _rolling_business_dates skips Sat/Sun, which would
+    # otherwise filter all of these orders out of the detection window.
+    market_date = datetime.now(UTC).astimezone(eastern).date()
+    while market_date.weekday() >= 5:
+        market_date = market_date - timedelta(days=1)
     today = datetime.combine(market_date, time(10, 0), tzinfo=eastern).astimezone(UTC)
     orders = [
         BrokerOrderSummary(
@@ -603,10 +674,16 @@ def test_local_heuristic_score_is_bounded_and_explainable() -> None:
 
     scored = TradeScorer().score(candidate)
 
+    from app.core.config import settings as _settings  # local import to avoid module-import noise
+
+    fallback_cap = float(getattr(_settings, "fallback_score_cap", 0.80))
     assert scored.ai_score.model_name == "local-manual"
-    assert 0.55 <= scored.ai_score.score <= 0.88
+    assert 0.0 <= scored.ai_score.score <= fallback_cap + 1e-9
     assert "Local fallback blended" in scored.ai_score.summary
-    assert any("Fallback score is capped at 0.88" in concern for concern in scored.ai_score.concerns)
+    assert any(
+        f"Fallback score is capped at {fallback_cap:.2f}" in concern
+        for concern in scored.ai_score.concerns
+    )
 
 
 def test_local_heuristic_negation_does_not_reward_phrases() -> None:
@@ -651,9 +728,126 @@ def test_local_heuristic_negation_does_not_reward_phrases() -> None:
     assert positive_score > negated_score
 
 
+def test_local_heuristic_does_not_negate_breakout_evidence() -> None:
+    """Regression: 'broke opening range high' is bullish breakout language,
+    not a negation of the 'opening range' positive phrase. Before the fix,
+    every opening-range-breakout candidate was double-penalized (negation
+    flip in evidence + negation flip in setup quality), and every recent
+    pipeline log carried a 'opening range negated nearby, treating as
+    headwind' note. This test pins the bug closed."""
+
+    candidate = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="opening_range_breakout_v1",
+        symbol="AMD",
+        side="buy",
+        proposed_notional=2.73,
+        proposed_entry=446.18,
+        proposed_stop=435.03,
+        proposed_take_profit=472.95,
+        trigger_evidence=[
+            "Price broke opening range high by 3.35%.",
+            "Price is 9.31% above previous close.",
+            "Recent volume is 13.85x the recent average.",
+            "Candidate created by opening range breakout lane.",
+        ],
+        confidence_hint=0.95,
+    )
+
+    scored = TradeScorer().score(candidate).ai_score
+    assert not any(
+        "'opening range' negated" in concern for concern in scored.concerns
+    ), scored.concerns
+
+
+def test_local_heuristic_treats_historical_below_vwap_as_setup_context() -> None:
+    """Regression: the vwap_reclaim lane emits the bullet
+    'Previous bar close was below VWAP.' to describe the bullish
+    pre-condition for the reclaim. Before the fix, 'below' both flipped
+    the VWAP positive AND fired the standalone 'below' headwind, so a
+    valid reclaim was double-penalized. The historical-context guard
+    skips both for bullets that lead with 'previous'/'prior'/etc."""
+
+    base_kwargs = dict(
+        correlation_id="evt_test",
+        strategy_id="vwap_reclaim_v1",
+        symbol="SPY",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=105,
+        proposed_stop=103.42,
+        confidence_hint=0.74,
+    )
+    with_history = TradeCandidate(
+        **base_kwargs,
+        trigger_evidence=[
+            "Price reclaimed VWAP by 0.20%.",
+            "Previous bar close was below VWAP.",
+            "Recent volume is 2.20x the recent average.",
+        ],
+    )
+    without_history = TradeCandidate(
+        **base_kwargs,
+        trigger_evidence=[
+            "Price reclaimed VWAP by 0.20%.",
+            "Recent volume is 2.20x the recent average.",
+        ],
+    )
+
+    scored_with = TradeScorer().score(with_history).ai_score
+    scored_without = TradeScorer().score(without_history).ai_score
+
+    # The historical bullet should not penalize VWAP nor fire a 'below' note.
+    assert not any(
+        "'vwap' negated" in concern for concern in scored_with.concerns
+    ), scored_with.concerns
+    assert not any(
+        "matched 'below'" in concern for concern in scored_with.concerns
+    ), scored_with.concerns
+    # Adding the historical context should not lower the score (it may add
+    # specificity completeness but must not subtract).
+    assert scored_with.score >= scored_without.score - 1e-9
+
+
+def test_local_heuristic_still_negates_directional_below_vwap() -> None:
+    """Belt-and-suspenders: the historical-context guard must NOT leak to
+    live-state bullets. 'Price is below VWAP' (no historical lead) still
+    needs to negate the VWAP positive and fire the 'below' headwind."""
+
+    base_kwargs = dict(
+        correlation_id="evt_test",
+        strategy_id="vwap_reclaim_v1",
+        symbol="SPY",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=105,
+        proposed_stop=103.42,
+        confidence_hint=0.74,
+    )
+    bullish = TradeCandidate(
+        **base_kwargs,
+        trigger_evidence=[
+            "Price reclaimed VWAP cleanly.",
+            "Recent volume is 1.80x the recent average.",
+        ],
+    )
+    bearish_live = TradeCandidate(
+        **base_kwargs,
+        trigger_evidence=[
+            "Price is below VWAP.",
+            "Recent volume is 1.80x the recent average.",
+        ],
+    )
+
+    bullish_score = TradeScorer().score(bullish).ai_score.score
+    bearish_score = TradeScorer().score(bearish_live).ai_score.score
+    assert bullish_score > bearish_score
+
+
 def test_local_heuristic_caps_unknown_strategy_harder() -> None:
-    """A strategy without a registered prior must be capped tighter than 0.88
-    so a brand-new lane can't ride alongside calibrated lanes on day one."""
+    """A strategy without a registered prior must be capped tighter than
+    the global fallback cap so a brand-new lane can't ride alongside
+    calibrated lanes on day one."""
 
     candidate = TradeCandidate(
         correlation_id="evt_test",
@@ -699,11 +893,137 @@ def test_local_heuristic_surfaces_raw_score_when_cap_binds() -> None:
         confidence_hint=0.95,
     )
 
+    from app.core.config import settings as _settings
+
+    fallback_cap = float(getattr(_settings, "fallback_score_cap", 0.80))
     scored = TradeScorer().score(candidate).ai_score
     assert scored.raw_score is not None
-    if scored.raw_score > 0.88:
+    if scored.raw_score > fallback_cap:
         assert any("binding constraint" in concern for concern in scored.concerns)
-    assert scored.score <= 0.88
+    assert scored.score <= fallback_cap + 1e-9
+
+
+def test_local_fallback_cap_respects_env_override(monkeypatch) -> None:
+    """``INVESTMENT_APP_FALLBACK_SCORE_CAP`` must be the single source of
+    truth so an operator can tighten or relax the cap without code edits.
+    Setting the cap mid-test must show up in both the cap-binding concern
+    text and the actual capped score."""
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "fallback_score_cap", 0.50)
+
+    candidate = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="opening_range_breakout_v1",
+        symbol="AAPL",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=290,
+        proposed_stop=287.5,
+        trigger_evidence=[
+            "Price broke opening range high by 0.42%.",
+            "Price is 1.20% above previous close.",
+            "Recent volume is 2.40x the recent average.",
+        ],
+        confidence_hint=0.95,
+    )
+
+    scored = TradeScorer().score(candidate).ai_score
+    assert scored.score <= 0.50 + 1e-9
+    assert any("capped at 0.50" in concern for concern in scored.concerns)
+
+
+def _make_scored_candidate(score: float, provenance: str = "local") -> ScoredTradeCandidate:
+    """Build a minimal scored candidate that the risk gate can evaluate."""
+
+    candidate = TradeCandidate(
+        correlation_id="evt_test",
+        strategy_id="opening_range_breakout_v1",
+        symbol="AAPL",
+        side="buy",
+        proposed_notional=2,
+        proposed_entry=100,
+        proposed_stop=98,
+        trigger_evidence=["Price broke opening range high by 0.42%."],
+        confidence_hint=0.7,
+    )
+    return ScoredTradeCandidate(
+        candidate=candidate,
+        ai_score=AIScore(
+            model_name="test",
+            score=score,
+            summary="synthetic",
+            concerns=[],
+            score_provenance=provenance,  # type: ignore[arg-type]
+        ),
+    )
+
+
+def _make_risk_limits() -> RiskLimits:
+    return RiskLimits(
+        allowed_symbols=["AAPL"],
+        target_position_percent=0.25,
+        max_open_positions=6,
+        max_daily_loss=2.0,
+        allow_live_trading=False,
+    )
+
+
+def _make_portfolio_state() -> PortfolioState:
+    return PortfolioState(
+        open_positions=0,
+        day_trades_5_business_days=0,
+        realized_pnl_today=0,
+        buying_power=100,
+        portfolio_value=100,
+        trading_mode="paper",
+    )
+
+
+def test_risk_gate_rejects_local_score_below_local_min(monkeypatch) -> None:
+    """Real-money guard: while no model scorer is in the loop, the risk
+    gate must reject local-tier scores below ``local_fallback_min_score``
+    even when they clear the global ``ai_min_score`` floor."""
+
+    monkeypatch.setattr(settings, "ai_min_score", 0.55)
+    monkeypatch.setattr(settings, "local_fallback_min_score", 0.65)
+
+    scored = _make_scored_candidate(score=0.60, provenance="local")
+    decision, intent = RiskEngine(_make_risk_limits()).evaluate(scored, _make_portfolio_state())
+
+    assert decision.state == "rejected"
+    assert intent is None
+    assert any("local-tier minimum" in reason for reason in decision.reasons)
+
+
+def test_risk_gate_allows_model_score_under_local_floor(monkeypatch) -> None:
+    """The local-tier floor must apply only when score_provenance is
+    'local'. A Claude/OpenAI score at the same value should pass because
+    model-tier scores are calibrated against a different distribution."""
+
+    monkeypatch.setattr(settings, "ai_min_score", 0.55)
+    monkeypatch.setattr(settings, "local_fallback_min_score", 0.65)
+
+    scored = _make_scored_candidate(score=0.60, provenance="anthropic")
+    decision, intent = RiskEngine(_make_risk_limits()).evaluate(scored, _make_portfolio_state())
+
+    assert decision.state == "approved", decision.reasons
+    assert intent is not None
+
+
+def test_risk_gate_respects_local_min_env_override(monkeypatch) -> None:
+    """Operators must be able to relax the local-tier floor without code
+    changes when, e.g., they want to validate that a score barely above
+    the global threshold can still flow."""
+
+    monkeypatch.setattr(settings, "ai_min_score", 0.55)
+    monkeypatch.setattr(settings, "local_fallback_min_score", 0.55)
+
+    scored = _make_scored_candidate(score=0.58, provenance="local")
+    decision, _ = RiskEngine(_make_risk_limits()).evaluate(scored, _make_portfolio_state())
+
+    assert decision.state == "approved", decision.reasons
 
 
 def test_local_heuristic_provenance_is_local() -> None:

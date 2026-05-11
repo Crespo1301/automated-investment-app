@@ -33,6 +33,7 @@ export default async function PortfolioPage() {
       marketClock={safety?.market_clock ?? null}
       portfolioDelta={recap?.portfolio_delta ?? null}
       openPositions={positions.length}
+      providerUsage={recap?.provider_usage ?? null}
       title="Portfolio"
     >
       <article className="panel">

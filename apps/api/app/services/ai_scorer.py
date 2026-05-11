@@ -11,7 +11,8 @@ Local fallback design
 The local heuristic is intentionally explainable. While provider keys are
 unfunded, this layer carries scoring, so its contract is:
 
-1. Every score is bounded (cap = ``FALLBACK_CAP``, currently 0.88).
+1. Every score is bounded by the configured fallback cap (default 0.80,
+   env override ``INVESTMENT_APP_FALLBACK_SCORE_CAP``).
 2. Every score carries a concerns list explaining missing context and binding
    constraints. When news, spread, depth, volatility, or broader market context
    are available, the fallback uses them.
@@ -35,8 +36,14 @@ from app.core.config import settings
 from app.domain.trading import AIScore, ScoredTradeCandidate, TradeCandidate
 
 
-FALLBACK_CAP = 0.88
 UNKNOWN_STRATEGY_CAP = 0.70
+
+
+def _fallback_cap() -> float:
+    """Resolve the fallback cap at call time so env-driven overrides via
+    ``INVESTMENT_APP_FALLBACK_SCORE_CAP`` are honored without restarting."""
+
+    return float(getattr(settings, "fallback_score_cap", 0.80))
 
 STRATEGY_PRIORS = {
     "opening_range_breakout_v1": 0.78,
@@ -76,13 +83,18 @@ NEGATIVE_EVIDENCE_WEIGHTS = {
 # Example: "price reclaimed VWAP" → +0.04. "price lost VWAP" → -0.04.
 # Without this, "below VWAP" would simultaneously add +0.04 (vwap) and
 # -0.03 (below), netting +0.01 when it should net negative.
+#
+# Note: ``broke`` is intentionally NOT in this set. In the strategy-engine
+# evidence corpus, "broke" is overwhelmingly bullish ("broke opening range
+# high", "broke resistance"). The negation case "broke below" is already
+# caught by the ``below`` token sitting immediately before the positive
+# phrase, so listing ``broke`` here would only generate false negatives.
 NEGATION_TOKENS = {
     "below",
     "under",
     "lost",
     "failed",
     "rejected",
-    "broke",  # "broke below"
     "lacks",
     "missing",
     "without",
@@ -90,6 +102,15 @@ NEGATION_TOKENS = {
     "not",
 }
 NEGATION_WINDOW = 3
+
+# Tokens at the start of a bullet that flag the bullet as describing
+# *historical* setup context rather than current signal direction. When a
+# bullet leads with one of these, scoring skips both negation flips and
+# headwind penalties inside that bullet — otherwise lanes like vwap_reclaim
+# get double-punished for the bullet "Previous bar close was below VWAP",
+# which is the bullish setup pre-condition, not a live headwind.
+HISTORICAL_CONTEXT_TOKENS = {"previous", "prior", "earlier", "before"}
+HISTORICAL_CONTEXT_HEAD_WINDOW = 4
 
 
 def _tokenize(text: str) -> list[str]:
@@ -120,6 +141,17 @@ def _is_negated(haystack_words: list[str], start: int) -> bool:
 
     window_start = max(0, start - NEGATION_WINDOW)
     return any(token in NEGATION_TOKENS for token in haystack_words[window_start:start])
+
+
+def _is_historical_bullet(words: list[str]) -> bool:
+    """True when a bullet leads with a historical-context token.
+
+    Strategy-engine bullets like ``"Previous bar close was below VWAP."``
+    describe the *setup pre-condition* that justifies the bullish entry.
+    Treating them as live headwinds double-penalizes valid candidates.
+    """
+
+    return any(token in HISTORICAL_CONTEXT_TOKENS for token in words[:HISTORICAL_CONTEXT_HEAD_WINDOW])
 
 
 class TradeScorer:
@@ -247,18 +279,17 @@ class TradeScorer:
         raw_score = max(0.0, raw_score)
 
         unknown_strategy = candidate.strategy_id not in STRATEGY_PRIORS
-        # NOTE: cap concern phrasing must include the literal substring
-        # "Fallback score is capped at 0.88" - the test suite asserts on it.
+        fallback_cap = _fallback_cap()
         concerns: list[str] = [
-            f"Fallback score is capped at {FALLBACK_CAP:.2f} because no external model context was available.",
+            f"Fallback score is capped at {fallback_cap:.2f} because no external model context was available.",
             "Fallback used deterministic market-context checks for spread, top-of-book depth, volatility, broader market regime, and news when available.",
         ]
-        if raw_score > FALLBACK_CAP:
+        if raw_score > fallback_cap:
             concerns.append(
                 f"Heuristic raw score was {raw_score:.2f}; cap is the binding constraint on this candidate."
             )
 
-        applied_cap = FALLBACK_CAP
+        applied_cap = fallback_cap
         if unknown_strategy:
             applied_cap = min(applied_cap, UNKNOWN_STRATEGY_CAP)
             concerns.append(
@@ -289,49 +320,48 @@ class TradeScorer:
     def _evidence_score(self, candidate: TradeCandidate) -> tuple[float, list[str]]:
         """Score the quality and specificity of trigger evidence.
 
-        Uses word-boundary phrase matching with a negation window so
-        "below VWAP" doesn't fire the VWAP positive. Completeness is
-        specificity-weighted: bullets containing numeric magnitudes count
-        more than vague prose.
+        Bullets are processed individually so historical-context bullets
+        (e.g. "Previous bar close was below VWAP") don't fire negation
+        flips or headwind penalties on what is actually a bullish
+        pre-condition. Completeness is specificity-weighted: bullets with
+        numeric magnitudes count more than vague prose.
         """
 
-        words = _tokenize(" ".join(candidate.trigger_evidence))
         notes: list[str] = []
         keyword_score = 0.0
+        specific_count = 0
+        magnitude_count = 0
 
-        for phrase, weight in POSITIVE_EVIDENCE_WEIGHTS.items():
-            for hit in _contains_phrase(words, phrase):
-                if _is_negated(words, hit):
-                    keyword_score -= weight
-                    notes.append(f"Fallback evidence: '{phrase}' negated nearby, treating as headwind.")
-                else:
-                    keyword_score += weight
+        for bullet in candidate.trigger_evidence:
+            words = _tokenize(bullet)
+            historical = _is_historical_bullet(words)
 
-        for phrase, weight in NEGATIVE_EVIDENCE_WEIGHTS.items():
-            for hit in _contains_phrase(words, phrase):
-                # Negation tokens are themselves the headwind list, so a
-                # double-negation ("not below") would currently still penalize.
-                # That's intentional: in this corpus "not below" rarely appears
-                # and erring conservative is the right default for a fallback.
-                keyword_score += weight
-                notes.append(f"Fallback evidence penalty matched '{phrase}'.")
+            for phrase, weight in POSITIVE_EVIDENCE_WEIGHTS.items():
+                for hit in _contains_phrase(words, phrase):
+                    if not historical and _is_negated(words, hit):
+                        keyword_score -= weight
+                        notes.append(
+                            f"Fallback evidence: '{phrase}' negated nearby, treating as headwind."
+                        )
+                    else:
+                        keyword_score += weight
 
-        # Specificity-weighted completeness: bullets containing a percent,
-        # an x-multiplier, or a digit count more than vague prose.
-        specific_count = sum(
-            1
-            for item in candidate.trigger_evidence
-            if re.search(r"\d", item) or "%" in item
-        )
+            if not historical:
+                for phrase, weight in NEGATIVE_EVIDENCE_WEIGHTS.items():
+                    for hit in _contains_phrase(words, phrase):
+                        keyword_score += weight
+                        notes.append(f"Fallback evidence penalty matched '{phrase}'.")
+
+            if re.search(r"\d", bullet) or "%" in bullet:
+                specific_count += 1
+            lowered = bullet.lower()
+            if "%" in lowered or "x" in lowered:
+                magnitude_count += 1
+
         # Cap specificity contribution at five bullets so a flood of weak
         # bullets can't dominate the score.
         completeness = min(1.0, specific_count / 5)
-
-        # Bonus for bullets that name a specific magnitude (% or x-multiplier).
-        magnitude_bonus = min(
-            0.10,
-            sum(1 for item in candidate.trigger_evidence if "%" in item.lower() or "x" in item.lower()) * 0.025,
-        )
+        magnitude_bonus = min(0.10, magnitude_count * 0.025)
 
         score = 0.50 + completeness * 0.22 + keyword_score + magnitude_bonus
         return max(0.0, min(1.0, score)), notes
@@ -339,29 +369,37 @@ class TradeScorer:
     def _setup_quality_score(self, candidate: TradeCandidate) -> float:
         """Reward setups with clear aggressive small-win structure.
 
-        Mirrors the negation-aware logic in ``_evidence_score`` so a phrase
-        like "lost VWAP" doesn't reward the VWAP setup credit.
+        Mirrors the per-bullet, historical-context-aware logic in
+        ``_evidence_score`` so a phrase like "lost VWAP" doesn't reward
+        the VWAP setup credit, but a historical pre-condition bullet
+        like "Previous bar close was below VWAP" doesn't sabotage it.
         """
 
-        words = _tokenize(" ".join(candidate.trigger_evidence))
         score = 0.45
+        weights = (
+            ("opening range", 0.18),
+            ("vwap", 0.14),
+            ("recent volume", 0.14),
+            ("volume pressure", 0.14),
+            ("above previous close", 0.08),
+            ("recovered", 0.08),
+            ("pullback", 0.08),
+        )
+        any_unavailable = False
 
-        def fire(phrase: str, weight: float) -> None:
-            nonlocal score
-            for hit in _contains_phrase(words, phrase):
-                if _is_negated(words, hit):
-                    score -= weight
-                else:
-                    score += weight
+        for bullet in candidate.trigger_evidence:
+            words = _tokenize(bullet)
+            historical = _is_historical_bullet(words)
+            if "unavailable" in words:
+                any_unavailable = True
+            for phrase, weight in weights:
+                for hit in _contains_phrase(words, phrase):
+                    if not historical and _is_negated(words, hit):
+                        score -= weight
+                    else:
+                        score += weight
 
-        fire("opening range", 0.18)
-        fire("vwap", 0.14)
-        fire("recent volume", 0.14)
-        fire("volume pressure", 0.14)
-        fire("above previous close", 0.08)
-        fire("recovered", 0.08)
-        fire("pullback", 0.08)
-        if "unavailable" in words:
+        if any_unavailable:
             score -= 0.12
 
         return max(0.0, min(1.0, score))

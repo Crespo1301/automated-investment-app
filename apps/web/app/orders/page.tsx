@@ -35,6 +35,7 @@ export default async function OrdersPage() {
       marketClock={safety?.market_clock ?? null}
       portfolioDelta={recap?.portfolio_delta ?? null}
       openPositions={reconciliation?.positions.length ?? 0}
+      providerUsage={recap?.provider_usage ?? null}
       title="Order ledger"
     >
       <article className="panel">

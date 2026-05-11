@@ -174,6 +174,7 @@ export default async function HomePage() {
       marketOpen={marketOpen}
       portfolioDelta={dailyRecap?.portfolio_delta ?? null}
       openPositions={positions.length}
+      providerUsage={dailyRecap?.provider_usage ?? null}
       title="Cockpit"
     >
       <section className={account && !killSwitchEnabled ? "notice-row" : "notice-row warning-row"}>

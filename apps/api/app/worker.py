@@ -9,6 +9,7 @@ from app.services.broker_adapter import (
     get_active_alpaca_broker,
     get_alpaca_paper_broker,
 )
+from app.services.audit_replay import replay_pipeline_runs
 from app.services.audit_store import (
     get_autopilot_state,
     record_cancel_result,
@@ -118,6 +119,30 @@ def main() -> None:
         default=None,
         help="Optional testing limit for --autopilot-loop.",
     )
+    parser.add_argument(
+        "--replay-pipeline",
+        action="store_true",
+        help="Re-score recorded pipeline runs with the current local fallback "
+        "scorer and report per-strategy deltas plus decision flips.",
+    )
+    parser.add_argument(
+        "--replay-limit",
+        type=int,
+        default=None,
+        help="Replay only the most recent N pipeline runs (default: all).",
+    )
+    parser.add_argument(
+        "--replay-include-model-tier",
+        action="store_true",
+        help="Include rows scored by Claude/OpenAI in the replay (default: skip "
+        "non-local rows since the fallback can't replicate model output).",
+    )
+    parser.add_argument(
+        "--replay-current-schema-only",
+        action="store_true",
+        help="Skip pre-market-context candidates in replay. Use this when "
+        "validating a scoring-logic change to avoid apples-to-oranges deltas.",
+    )
     args = parser.parse_args()
 
     try:
@@ -138,6 +163,7 @@ def main() -> None:
             args.autopilot_once,
             args.autopilot_loop,
             args.morning_readiness,
+            args.replay_pipeline,
         ]
         if sum(bool(action) for action in selected_actions) > 1:
             parser.error("Choose only one worker action at a time.")
@@ -183,6 +209,13 @@ def main() -> None:
             result = get_autopilot_state()
         elif args.morning_readiness:
             result = get_morning_readiness()
+        elif args.replay_pipeline:
+            report = replay_pipeline_runs(
+                limit=args.replay_limit,
+                only_local_tier=not args.replay_include_model_tier,
+                only_with_market_context=args.replay_current_schema_only,
+            )
+            result = report.to_summary()
         else:
             result = run_single_cycle()
     except MissingBrokerCredentialsError as exc:

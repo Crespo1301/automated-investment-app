@@ -1,6 +1,7 @@
 import { PdtMeter } from "@/components/analytics-visuals";
 import { DashboardShell } from "@/components/dashboard-shell";
 import {
+  getDailyRecap,
   getExitCheck,
   getProtectionPlan,
   getReconciliation,
@@ -9,11 +10,12 @@ import {
 import { currencyFormatter } from "@/lib/format";
 
 export default async function RiskPage() {
-  const [reconciliation, safety, protectionPlan, exitCheck] = await Promise.all([
+  const [reconciliation, safety, protectionPlan, exitCheck, recap] = await Promise.all([
     getReconciliation(),
     getSafetyStatus(),
     getProtectionPlan(),
     getExitCheck(),
+    getDailyRecap(),
   ]);
 
   const account = reconciliation?.account ?? null;
@@ -27,6 +29,8 @@ export default async function RiskPage() {
       killSwitchEnabled={killSwitchEnabled}
       marketClock={safety?.market_clock ?? null}
       openPositions={positions.length}
+      portfolioDelta={recap?.portfolio_delta ?? null}
+      providerUsage={recap?.provider_usage ?? null}
       title="Risk and exits"
     >
       <section className="content-grid">

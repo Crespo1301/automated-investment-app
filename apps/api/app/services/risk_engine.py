@@ -42,6 +42,22 @@ class RiskEngine:
         if scored_candidate.ai_score.score < settings.ai_min_score:
             reasons.append("AI score is below the minimum approval threshold.")
 
+        # When the deterministic fallback produced this score, hold it to a
+        # stricter local-only minimum than the global threshold. This is the
+        # backstop while Claude/OpenAI are unfunded: the global 0.55 floor
+        # was tuned for model-tier scores; the local scorer should clear a
+        # higher bar before risking real money. Env override:
+        # ``INVESTMENT_APP_LOCAL_FALLBACK_MIN_SCORE``.
+        local_min = float(getattr(settings, "local_fallback_min_score", 0.65))
+        if (
+            scored_candidate.ai_score.score_provenance == "local"
+            and scored_candidate.ai_score.score < local_min
+        ):
+            reasons.append(
+                f"Local fallback score {scored_candidate.ai_score.score:.2f} is below the "
+                f"{local_min:.2f} local-tier minimum (raised while no model scorer is in the loop)."
+            )
+
         if (
             candidate.spread_bps is not None
             and candidate.spread_bps > self.limits.max_entry_spread_bps

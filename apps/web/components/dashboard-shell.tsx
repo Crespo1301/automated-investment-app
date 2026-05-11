@@ -1,8 +1,68 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import type { BrokerAccountStatus, MarketClockStatus } from "@/lib/contracts";
+import type {
+  BrokerAccountStatus,
+  MarketClockStatus,
+  ProviderUsageSummary,
+} from "@/lib/contracts";
 import { currencyFormatter } from "@/lib/format";
 import { AutoRefresh } from "@/components/auto-refresh";
+
+type ScoringTierPosture = {
+  label: string;
+  detail: string;
+  variant: "healthy" | "warning" | "neutral";
+};
+
+// At-a-glance scoring-tier posture, derived from today's provider_usage
+// counts. The dashboard already renders ProviderBars deep inside the
+// Strategies tab; this surfaces the headline so the operator knows from
+// every page whether Claude/OpenAI carried scoring today or whether the
+// deterministic fallback is the only thing in the loop.
+function summarizeScoringTier(providers: ProviderUsageSummary[]): ScoringTierPosture | null {
+  if (!providers.length) return null;
+
+  let local = 0;
+  let anthropic = 0;
+  let openai = 0;
+  for (const row of providers) {
+    const key = row.provider.toLowerCase();
+    if (key === "local" || key.startsWith("local-manual")) local += row.count;
+    else if (key === "anthropic" || key.includes("claude") || key.includes("anthropic")) anthropic += row.count;
+    else if (key === "openai" || key.includes("gpt") || key.includes("openai")) openai += row.count;
+  }
+  const total = local + anthropic + openai;
+  if (total === 0) return null;
+
+  if (anthropic === total) {
+    return { label: "Scoring: Claude", detail: `${total}/${total} today`, variant: "healthy" };
+  }
+  if (openai === total) {
+    return { label: "Scoring: OpenAI", detail: `${total}/${total} today`, variant: "healthy" };
+  }
+  if (local === total) {
+    return {
+      label: "Scoring: local fallback",
+      detail: `${total}/${total} today`,
+      variant: "warning",
+    };
+  }
+  // Mixed: model carried some, fallback carried the rest. Lean warning
+  // when fallback is the majority so the operator notices model gaps.
+  const modelCount = anthropic + openai;
+  if (local > modelCount) {
+    return {
+      label: "Scoring: mostly local",
+      detail: `${local}/${total} fallback today`,
+      variant: "warning",
+    };
+  }
+  return {
+    label: "Scoring: mixed",
+    detail: `${modelCount}/${total} via model`,
+    variant: "neutral",
+  };
+}
 
 const navItems = [
   { label: "Overview", href: "/" },
@@ -94,6 +154,7 @@ type DashboardShellProps = {
   marketClock?: MarketClockStatus | null;
   portfolioDelta?: number | null;
   openPositions?: number;
+  providerUsage?: ProviderUsageSummary[] | null;
   subtitle?: string;
   title: string;
 };
@@ -108,10 +169,19 @@ export function DashboardShell({
   marketClock,
   portfolioDelta,
   openPositions = 0,
+  providerUsage,
   subtitle = "Automated Investment App",
   title,
 }: DashboardShellProps) {
   const mode = account?.account_mode ?? accountMode;
+  const scoringTier = summarizeScoringTier(providerUsage ?? []);
+  const scoringTierClass = scoringTier
+    ? scoringTier.variant === "healthy"
+      ? "state-pill state-healthy"
+      : scoringTier.variant === "warning"
+        ? "state-pill state-warning"
+        : "state-pill"
+    : "state-pill";
 
   return (
     <main className="app-frame">
@@ -155,6 +225,14 @@ export function DashboardShell({
             <span className={killSwitchEnabled ? "state-pill state-blocked" : "state-pill state-healthy"}>
               {killSwitchEnabled ? "Kill switch" : "Armed"}
             </span>
+            {scoringTier ? (
+              <span
+                className={scoringTierClass}
+                title={`${scoringTier.label} - ${scoringTier.detail}`}
+              >
+                {scoringTier.label}
+              </span>
+            ) : null}
           </div>
         </header>
 

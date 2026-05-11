@@ -33,6 +33,7 @@ export default async function SettingsPage() {
       marketClock={safety?.market_clock ?? null}
       portfolioDelta={recap?.portfolio_delta ?? null}
       openPositions={reconciliation?.positions.length ?? 0}
+      providerUsage={recap?.provider_usage ?? null}
       title="Operator settings"
     >
       <article className="panel">

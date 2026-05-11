@@ -6,6 +6,11 @@ import {
 } from "@/components/analytics-visuals";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { getDailyRecap, getReconciliation, getSafetyStatus } from "@/lib/server-data";
+import { currencyFormatter } from "@/lib/format";
+
+const STEADY_LANE_PERCENT = 0.25;
+const HUNTER_LANE_PERCENT = 0.15;
+const ALPACA_FRACTIONAL_MIN = 1.0;
 
 const fundedAnthropic = Boolean(process.env.ANTHROPIC_API_KEY);
 const fundedOpenAi = Boolean(process.env.OPENAI_API_KEY);
@@ -39,7 +44,7 @@ const STRATEGY_LANES = [
     id: "high_upside_momentum_v1",
     label: "High-upside momentum",
     prior: 0.62,
-    note: "Riskier lane for stronger moves, larger volume expansion, supportive market regime, and cleaner spreads.",
+    note: "Hunter lane: stronger moves, larger volume expansion, supportive market regime, cleaner spreads. Sized at 15% of portfolio vs. 25% for steady lanes — losing trades are smaller drawdowns.",
   },
   {
     id: "micro_breakout_v1",
@@ -57,6 +62,10 @@ export default async function StrategiesPage() {
   ]);
 
   const account = reconciliation?.account ?? null;
+  const portfolioValue = account?.portfolio_value ?? null;
+  const steadySize = portfolioValue != null ? Math.max(ALPACA_FRACTIONAL_MIN, portfolioValue * STEADY_LANE_PERCENT) : null;
+  const hunterSize = portfolioValue != null ? Math.max(ALPACA_FRACTIONAL_MIN, portfolioValue * HUNTER_LANE_PERCENT) : null;
+  const hunterFloored = portfolioValue != null && portfolioValue * HUNTER_LANE_PERCENT < ALPACA_FRACTIONAL_MIN;
 
   return (
     <DashboardShell
@@ -66,6 +75,7 @@ export default async function StrategiesPage() {
       marketClock={safety?.market_clock ?? null}
       portfolioDelta={recap?.portfolio_delta ?? null}
       openPositions={reconciliation?.positions.length ?? 0}
+      providerUsage={recap?.provider_usage ?? null}
       title="Strategy intelligence"
     >
       <article className="panel">
@@ -95,8 +105,9 @@ export default async function StrategiesPage() {
             fundedOpenAi={fundedOpenAi}
           />
           <p className="thesis" style={{ marginTop: 12 }}>
-            With API keys unfunded the deterministic local layer carries scoring. Its capped score (0.88 max) and explicit
-            concerns are surfaced on every candidate so the risk engine remains the final execution gate.
+            With API keys unfunded the deterministic local layer carries scoring. Its capped score (0.80 max) and explicit
+            concerns are surfaced on every candidate so the risk engine remains the final execution gate. Local-tier scores
+            must also clear a stricter 0.65 minimum before the risk gate approves an entry.
           </p>
         </article>
 
@@ -106,7 +117,7 @@ export default async function StrategiesPage() {
               <h2>Local fallback anatomy</h2>
               <p>Weights inside the deterministic scorer. Sums to 100% before cap.</p>
             </div>
-            <span className="state-pill state-info">cap 0.88</span>
+            <span className="state-pill state-info">cap 0.80 / floor 0.65</span>
           </div>
           <ScoreAnatomy />
           <p className="thesis" style={{ marginTop: 12 }}>
@@ -161,6 +172,41 @@ export default async function StrategiesPage() {
             </div>
           ))}
         </div>
+      </article>
+
+      <article className="panel">
+        <div className="section-title">
+          <div>
+            <h2>Lane sizing today</h2>
+            <p>Steady lanes compound small wins; the hunter lane chases asymmetric upside on a smaller slice.</p>
+          </div>
+          <span className="state-pill state-info">25% steady / 15% hunter</span>
+        </div>
+        <div className="visual-grid">
+          <div className="mini-panel">
+            <span className="metric-label">Steady compounder lanes</span>
+            <strong>{steadySize != null ? currencyFormatter(steadySize) : "-"} per trade</strong>
+            <span>{STEADY_LANE_PERCENT * 100}% of portfolio · 5 active lanes</span>
+          </div>
+          <div className="mini-panel">
+            <span className="metric-label">High-upside hunter lane</span>
+            <strong>{hunterSize != null ? currencyFormatter(hunterSize) : "-"} per trade</strong>
+            <span>
+              {HUNTER_LANE_PERCENT * 100}% of portfolio · 1 active lane
+              {hunterFloored ? " · floored to $1 Alpaca minimum" : ""}
+            </span>
+          </div>
+          <div className="mini-panel">
+            <span className="metric-label">PDT throughput</span>
+            <strong>3 day-trades / 5 BD</strong>
+            <span>Binding until portfolio crosses $25k — favor overnight holds</span>
+          </div>
+        </div>
+        <p className="thesis" style={{ marginTop: 12 }}>
+          {portfolioValue != null && portfolioValue < 25_000
+            ? `At ${currencyFormatter(portfolioValue)} the PDT rule caps same-day round trips at 3 per 5 business days. Compounding throughput improves materially only past $25k — until then, prefer setups that can hold overnight without forcing a same-day exit.`
+            : "Above the $25k threshold the PDT cap lifts; intraday round-trip throughput becomes a real compounding lever."}
+        </p>
       </article>
     </DashboardShell>
   );

@@ -165,6 +165,7 @@ class AggressiveStrategyEngine:
         high_upside_max_spread_bps: float = 50.0,
         high_upside_require_known_market_regime: bool = True,
         high_upside_require_known_news_sentiment: bool = False,
+        high_upside_proposed_notional: float | None = None,
         min_volume: float = 25_000,
     ) -> None:
         self.allowed_symbols = {symbol.upper() for symbol in allowed_symbols}
@@ -179,6 +180,13 @@ class AggressiveStrategyEngine:
         self.high_upside_max_spread_bps = high_upside_max_spread_bps
         self.high_upside_require_known_market_regime = high_upside_require_known_market_regime
         self.high_upside_require_known_news_sentiment = high_upside_require_known_news_sentiment
+        # When None, the hunter lane shares the steady-lane notional. When
+        # set, the hunter lane uses its own (typically smaller) sizing.
+        self.high_upside_proposed_notional = (
+            high_upside_proposed_notional
+            if high_upside_proposed_notional is not None
+            else proposed_notional
+        )
         self.min_volume = min_volume
         self.micro_breakout = MicroBreakoutStrategy(
             allowed_symbols=allowed_symbols,
@@ -349,6 +357,15 @@ class AggressiveStrategyEngine:
         if symbol not in self.allowed_symbols or event.previous_close is None:
             return None
 
+        # Defensive skip when the hunter-lane notional is below Alpaca's $1
+        # fractional minimum. Normally ``_calculate_target_notional`` clamps
+        # to $1 before this code sees it, so this only fires when a caller
+        # bypasses the helper and passes a sub-$1 notional directly. Better
+        # to short-circuit here than waste a scoring call on a candidate
+        # the risk gate would reject for under-minimum sizing.
+        if self.high_upside_proposed_notional < 1.0:
+            return None
+
         move = (event.price - event.previous_close) / event.previous_close
         recent_ratio = self._recent_volume_ratio(event)
         if move < self.high_upside_breakout_threshold:
@@ -392,6 +409,7 @@ class AggressiveStrategyEngine:
             event=event,
             strategy_id="high_upside_momentum_v1",
             confidence_hint=confidence_hint,
+            proposed_notional=self.high_upside_proposed_notional,
             stop_loss_percent=self.high_upside_stop_loss_percent,
             take_profit_percent=self.high_upside_take_profit_percent,
             evidence=[
@@ -399,6 +417,7 @@ class AggressiveStrategyEngine:
                 f"Recent volume is {recent_ratio:.2f}x the recent average, above the {self.high_upside_min_recent_volume_ratio:.2f}x high-upside threshold.",
                 f"Broader market regime is {event.market_regime}.",
                 f"News sentiment hint is {event.news_sentiment_hint}.",
+                f"Hunter-lane sizing is ${self.high_upside_proposed_notional:.2f} (smaller envelope than steady lanes).",
                 "Candidate created by high-upside momentum hunter lane.",
             ],
         )
@@ -410,11 +429,13 @@ class AggressiveStrategyEngine:
         strategy_id: str,
         confidence_hint: float,
         evidence: list[str],
+        proposed_notional: float | None = None,
         stop_loss_percent: float | None = None,
         take_profit_percent: float | None = None,
     ) -> TradeCandidate:
         stop_loss_percent = self.stop_loss_percent if stop_loss_percent is None else stop_loss_percent
         take_profit_percent = self.take_profit_percent if take_profit_percent is None else take_profit_percent
+        notional = self.proposed_notional if proposed_notional is None else proposed_notional
         stop_price = event.price * (1 - stop_loss_percent)
         take_profit_price = event.price * (1 + take_profit_percent)
         return TradeCandidate(
@@ -422,7 +443,7 @@ class AggressiveStrategyEngine:
             strategy_id=strategy_id,
             symbol=event.symbol.upper(),
             side="buy",
-            proposed_notional=self.proposed_notional,
+            proposed_notional=notional,
             proposed_entry=event.price,
             proposed_stop=round(stop_price, 2),
             proposed_take_profit=round(take_profit_price, 2),

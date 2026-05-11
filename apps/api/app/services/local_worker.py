@@ -102,6 +102,17 @@ def run_single_cycle(
             broker_receipt=None,
         )
 
+    # High-upside lane uses its own smaller envelope so a losing hunter
+    # trade is a smaller drawdown. ``_calculate_target_notional`` applies
+    # the same buying-power and cash-reserve clamps, so if 15% of the
+    # portfolio falls below $1 the lane will simply skip — that's the
+    # honest behavior at very small accounts.
+    high_upside_target_notional = _calculate_target_notional(
+        portfolio_value=portfolio_state.portfolio_value,
+        buying_power=portfolio_state.buying_power,
+        target_position_percent=settings.high_upside_position_size_percent,
+    )
+
     blocked_entry_symbols = _blocked_entry_symbols(broker)
     strategy = AggressiveStrategyEngine(
         allowed_symbols=limits.allowed_symbols,
@@ -116,6 +127,7 @@ def run_single_cycle(
         high_upside_max_spread_bps=settings.high_upside_max_spread_bps,
         high_upside_require_known_market_regime=settings.high_upside_require_known_market_regime,
         high_upside_require_known_news_sentiment=settings.high_upside_require_known_news_sentiment,
+        high_upside_proposed_notional=high_upside_target_notional,
         min_volume=settings.strategy_min_volume,
     )
 

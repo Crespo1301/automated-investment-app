@@ -74,7 +74,29 @@ class Settings(BaseSettings):
     high_upside_max_spread_bps: float = 50.0
     high_upside_require_known_market_regime: bool = True
     high_upside_require_known_news_sentiment: bool = False
+    # Per-trade sizing for the high-upside hunter lane, expressed as a
+    # fraction of portfolio value. Intentionally smaller than the steady
+    # ``position_size_percent`` so a losing hunter trade is a smaller
+    # drawdown. Note the sizing helper enforces a $1 floor (Alpaca's
+    # fractional minimum), so at very small portfolios both lanes
+    # converge near $1 and the percent gap only really expresses itself
+    # once the account is large enough to make the percentages dollar-
+    # different. Example: at $10 portfolio steady sizes at $2.50 and
+    # hunter at $1.50; at $100 steady is $25 and hunter is $15.
+    # Env override: ``INVESTMENT_APP_HIGH_UPSIDE_POSITION_SIZE_PERCENT``.
+    high_upside_position_size_percent: float = 0.15
     ai_min_score: float = 0.55
+    # Cap on the deterministic local fallback score. Lowered from 0.88 to
+    # 0.80 while Claude/OpenAI are unfunded: the local scorer is the
+    # production scorer, and it should never claim model-grade conviction.
+    # Env override: ``INVESTMENT_APP_FALLBACK_SCORE_CAP``.
+    fallback_score_cap: float = 0.80
+    # Minimum AI score the risk gate accepts when score_provenance is
+    # "local" (i.e., the deterministic fallback produced the score).
+    # Stricter than ``ai_min_score`` so weakly-validated local reads don't
+    # squeak through under the global 0.55 floor while a real model is
+    # offline. Env override: ``INVESTMENT_APP_LOCAL_FALLBACK_MIN_SCORE``.
+    local_fallback_min_score: float = 0.65
     max_entry_spread_bps: float = 75.0
     allow_live_trading: bool = False
     allow_outside_market_hours: bool = False
