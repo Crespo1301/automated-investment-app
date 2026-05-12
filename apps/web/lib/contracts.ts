@@ -84,6 +84,18 @@ export type BrokerReconciliationSnapshot = {
   positions: BrokerPositionSummary[];
 };
 
+export type RiskLimits = {
+  allowed_symbols: string[];
+  target_position_percent: number;
+  max_open_positions: number;
+  max_day_trades_5_business_days: number;
+  max_daily_loss: number;
+  max_entry_spread_bps: number;
+  allow_live_trading: boolean;
+  allow_outside_market_hours: boolean;
+  duplicate_order_lookback_minutes: number;
+};
+
 export type MarketClockStatus = {
   is_open: boolean;
   timestamp?: string | null;

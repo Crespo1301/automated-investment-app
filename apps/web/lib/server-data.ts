@@ -5,6 +5,7 @@ import type {
   ExitCheckResult,
   PerformanceHistory,
   ProtectionPlan,
+  RiskLimits,
 } from "@/lib/contracts";
 
 export const apiBaseUrl = process.env.INVESTMENT_WEB_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -47,6 +48,10 @@ export function getDailyRecap() {
 
 export function getPerformanceHistory() {
   return getApi<PerformanceHistory>("/api/performance/history");
+}
+
+export function getTradingConfig() {
+  return getApi<RiskLimits>("/api/trading/config");
 }
 
 export type OptionsCycleRecord = {

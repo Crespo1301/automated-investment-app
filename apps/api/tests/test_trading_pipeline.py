@@ -56,6 +56,9 @@ def isolate_runtime_settings(tmp_path):
         "autopilot_small_win_percent": settings.autopilot_small_win_percent,
         "autopilot_stop_loss_percent": settings.autopilot_stop_loss_percent,
         "autopilot_take_profit_percent": settings.autopilot_take_profit_percent,
+        "low_portfolio_threshold": settings.low_portfolio_threshold,
+        "low_portfolio_small_win_percent": settings.low_portfolio_small_win_percent,
+        "small_win_min_holding_minutes": settings.small_win_min_holding_minutes,
         "minimum_order_notional": settings.minimum_order_notional,
         "max_day_trades_5_business_days": settings.max_day_trades_5_business_days,
         "pdt_use_broker_daytrade_count": settings.pdt_use_broker_daytrade_count,
@@ -98,6 +101,9 @@ def isolate_runtime_settings(tmp_path):
     settings.autopilot_small_win_percent = 1.5
     settings.autopilot_stop_loss_percent = 2
     settings.autopilot_take_profit_percent = 3
+    settings.low_portfolio_threshold = 50
+    settings.low_portfolio_small_win_percent = 2.5
+    settings.small_win_min_holding_minutes = 1440
     settings.minimum_order_notional = 1
     settings.max_day_trades_5_business_days = 3
     settings.pdt_use_broker_daytrade_count = False
@@ -1987,6 +1993,45 @@ def test_exit_monitor_detects_small_win_signal() -> None:
     assert len(signals) == 1
     assert signals[0].reason == "small_win"
     assert signals[0].execution_allowed is True
+
+
+def test_low_portfolio_small_win_requires_bigger_move_and_hold_time() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    settings.autopilot_take_profit_percent = 6
+    orders = [
+        BrokerOrderSummary(
+            broker_order_id="buy_1",
+            symbol="SPY",
+            side="OrderSide.BUY",
+            order_type="OrderType.MARKET",
+            status="OrderStatus.FILLED",
+            filled_quantity=0.01,
+            filled_at=datetime.now(UTC) - timedelta(minutes=30),
+        )
+    ]
+
+    signals = evaluate_exit_signals(
+        positions=[
+            BrokerPositionSummary(
+                symbol="SPY",
+                quantity=0.01,
+                market_value=1.03,
+                cost_basis=1,
+                unrealized_pl=0.03,
+                unrealized_pl_percent=0.03,
+                current_price=103,
+            )
+        ],
+        orders=orders,
+        execution_allowed=True,
+        portfolio_value=20,
+    )
+
+    assert len(signals) == 1
+    assert signals[0].reason == "small_win"
+    assert signals[0].trigger_price == 102.5
+    assert signals[0].execution_allowed is False
 
 
 def test_exit_monitor_skips_position_with_open_sell_order() -> None:

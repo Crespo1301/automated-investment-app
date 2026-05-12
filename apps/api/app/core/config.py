@@ -115,6 +115,9 @@ class Settings(BaseSettings):
     autopilot_stop_loss_percent: float = 2.5
     autopilot_small_win_percent: float = 1.5
     autopilot_take_profit_percent: float = 6.0
+    low_portfolio_threshold: float = 50.0
+    low_portfolio_small_win_percent: float = 2.5
+    small_win_min_holding_minutes: int = 1440
     minimum_order_notional: float = 1.0
     allow_demo_live_entries: bool = False
     # Options Level 1 foundation. ``options_enabled`` defaults to False so

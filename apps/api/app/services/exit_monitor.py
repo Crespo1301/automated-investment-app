@@ -1,5 +1,7 @@
 """App-managed exit monitoring for fractional starter positions."""
 
+from datetime import UTC, datetime
+
 from app.core.config import settings
 from app.domain.trading import (
     BrokerOrderSummary,
@@ -15,6 +17,7 @@ def evaluate_exit_signals(
     orders: list[BrokerOrderSummary],
     *,
     execution_allowed: bool,
+    portfolio_value: float | None = None,
 ) -> list[ExitSignal]:
     """Return stop-loss and take-profit signals for open long positions."""
 
@@ -29,7 +32,8 @@ def evaluate_exit_signals(
 
         average_entry_price = position.cost_basis / position.quantity
         stop_price = average_entry_price * (1 - settings.autopilot_stop_loss_percent / 100)
-        small_win_price = average_entry_price * (1 + settings.autopilot_small_win_percent / 100)
+        small_win_percent = _small_win_percent(portfolio_value)
+        small_win_price = average_entry_price * (1 + small_win_percent / 100)
         take_profit_price = average_entry_price * (1 + settings.autopilot_take_profit_percent / 100)
 
         if position.current_price <= stop_price:
@@ -59,6 +63,11 @@ def evaluate_exit_signals(
                 )
             )
         elif position.current_price >= small_win_price:
+            small_win_execution_allowed = execution_allowed and _small_win_hold_satisfied(
+                position.symbol,
+                orders,
+                portfolio_value=portfolio_value,
+            )
             signals.append(
                 ExitSignal(
                     symbol=position.symbol,
@@ -68,7 +77,7 @@ def evaluate_exit_signals(
                     trigger_price=round(small_win_price, 2),
                     quantity=position.quantity,
                     market_value=position.market_value,
-                    execution_allowed=execution_allowed,
+                    execution_allowed=small_win_execution_allowed,
                 )
             )
 
@@ -83,17 +92,24 @@ def run_exit_check(broker: object, *, execute: bool) -> ExitCheckResult:
     market_is_open = _market_is_open(broker)
     if execution_allowed and not market_is_open and not settings.allow_outside_market_hours:
         execution_allowed = False
+    portfolio_value = getattr(getattr(snapshot, "account", None), "portfolio_value", None)
 
     signals = evaluate_exit_signals(
         snapshot.positions,
         snapshot.orders,
         execution_allowed=execution_allowed,
+        portfolio_value=portfolio_value,
     )
     submitted_receipts = []
     blocked_reasons: list[str] = []
 
     if execution_allowed:
         for signal in signals:
+            if not signal.execution_allowed:
+                blocked_reasons.append(
+                    f"{signal.symbol}: small-win exit is waiting for the minimum holding window."
+                )
+                continue
             day_trade_guard = _day_trade_guard(broker, signal.symbol)
             if day_trade_guard is not None and not day_trade_guard.allowed:
                 blocked_reasons.append(f"{signal.symbol}: {day_trade_guard.reason}")
@@ -108,6 +124,11 @@ def run_exit_check(broker: object, *, execute: bool) -> ExitCheckResult:
         "Existing open sell orders suppress duplicate exit signals.",
         f"Positions below ${settings.minimum_order_notional:.2f} market value are skipped to avoid sub-dollar trade attempts.",
     ]
+    if portfolio_value is not None and portfolio_value <= settings.low_portfolio_threshold:
+        notes.append(
+            f"Low-portfolio mode is active: small-win exits require {settings.low_portfolio_small_win_percent:.1f}% "
+            f"and at least {settings.small_win_min_holding_minutes} holding minutes."
+        )
     if not market_is_open and not settings.allow_outside_market_hours:
         notes.append("Exit execution is locked because the regular market is closed.")
     if signals and not execution_allowed:
@@ -133,6 +154,53 @@ def _has_open_sell_order(symbol: str, orders: list[BrokerOrderSummary]) -> bool:
             return True
 
     return False
+
+
+def _small_win_percent(portfolio_value: float | None) -> float:
+    if portfolio_value is not None and portfolio_value <= settings.low_portfolio_threshold:
+        return max(settings.autopilot_small_win_percent, settings.low_portfolio_small_win_percent)
+
+    return settings.autopilot_small_win_percent
+
+
+def _small_win_hold_satisfied(
+    symbol: str,
+    orders: list[BrokerOrderSummary],
+    *,
+    portfolio_value: float | None,
+) -> bool:
+    if portfolio_value is None or portfolio_value > settings.low_portfolio_threshold:
+        return True
+
+    required_minutes = max(0, settings.small_win_min_holding_minutes)
+    if required_minutes == 0:
+        return True
+
+    latest_buy = _latest_filled_buy(symbol, orders)
+    if latest_buy is None or latest_buy.filled_at is None:
+        return False
+
+    held_for = datetime.now(UTC) - latest_buy.filled_at.astimezone(UTC)
+    return held_for.total_seconds() >= required_minutes * 60
+
+
+def _latest_filled_buy(
+    symbol: str,
+    orders: list[BrokerOrderSummary],
+) -> BrokerOrderSummary | None:
+    buys = [
+        order
+        for order in orders
+        if order.symbol.upper() == symbol.upper()
+        and order.side.split(".")[-1].lower() == "buy"
+        and order.status.split(".")[-1].lower() == "filled"
+        and order.filled_quantity > 0
+        and order.filled_at is not None
+    ]
+    if not buys:
+        return None
+
+    return max(buys, key=lambda order: order.filled_at)
 
 
 def _market_is_open(broker: object) -> bool:

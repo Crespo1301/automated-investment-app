@@ -241,7 +241,7 @@ def alpaca_reconciliation() -> BrokerReconciliationSnapshot:
 def active_broker_reconciliation() -> BrokerReconciliationSnapshot:
     """Read-only account, orders, and positions for the active paper/live config."""
 
-    snapshot = get_active_alpaca_broker().get_reconciliation_snapshot()
+    snapshot = get_active_alpaca_broker().get_reconciliation_snapshot(order_limit=100)
     record_reconciliation_snapshot(snapshot)
     return snapshot
 
