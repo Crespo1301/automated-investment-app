@@ -70,6 +70,7 @@ const navItems = [
   { label: "Strategies", href: "/strategies" },
   { label: "Risk", href: "/risk" },
   { label: "Orders", href: "/orders" },
+  { label: "Options", href: "/options" },
   { label: "Settings", href: "/settings" },
 ];
 

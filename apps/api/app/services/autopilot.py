@@ -16,6 +16,7 @@ from app.services.audit_store import (
 from app.services.broker_adapter import get_active_alpaca_broker
 from app.services.exit_monitor import run_exit_check
 from app.services.local_worker import run_single_cycle
+from app.services.options_worker import run_options_cycle
 
 
 def enable_autopilot(reason: str = "Operator enabled autopilot.") -> AutopilotState:
@@ -63,6 +64,27 @@ def run_autopilot_once() -> AutopilotState:
     if exit_result.signals:
         symbols = ",".join(f"{signal.symbol}:{signal.reason}" for signal in exit_result.signals)
         return record_autopilot_heartbeat(f"exit_signal_locked:{symbols}")
+
+    if settings.options_enabled:
+        try:
+            options_records = run_options_cycle(
+                broker,
+                execute=settings.autopilot_allow_entries,
+            )
+        except Exception as exc:
+            record_autopilot_heartbeat(
+                f"options_cycle_error:{exc.__class__.__name__}"
+            )
+            options_records = []
+
+        submitted = [r for r in options_records if r.receipt is not None]
+        if submitted:
+            symbols = ",".join(r.underlying for r in submitted)
+            return record_autopilot_heartbeat(f"options_submitted:{symbols}")
+        approved = [r for r in options_records if r.decision and r.decision.state == "approved"]
+        if approved:
+            symbols = ",".join(r.underlying for r in approved)
+            record_autopilot_heartbeat(f"options_approved_no_submit:{symbols}")
 
     if not settings.autopilot_allow_entries:
         return record_autopilot_heartbeat(

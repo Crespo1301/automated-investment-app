@@ -21,6 +21,9 @@ from app.domain.trading import (
     ExecutionIntent,
     MarketClockStatus,
     MarketEvent,
+    OptionContract,
+    OptionsChainSnapshot,
+    OptionsExecutionIntent,
     new_id,
 )
 
@@ -107,6 +110,7 @@ class AlpacaBroker:
             settings.alpaca_api_key,
             settings.alpaca_secret_key,
         )
+        self._options_data_client = None  # lazily initialized on first chain call
 
     def get_account_status(self) -> BrokerAccountStatus:
         """Fetch a read-only account snapshot from Alpaca."""
@@ -287,14 +291,19 @@ class AlpacaBroker:
         """Return a rolling five-business-day PDT guard for a prospective sell."""
 
         normalized_symbol = symbol.upper()
-        orders = self.list_recent_orders(limit=100)
+        orders = self.list_recent_orders(limit=500)
         records = _detect_day_trade_records(orders)
         account = self.client.get_account()
-        day_trade_count = _optional_int(
+        broker_day_trade_count = _optional_int(
             getattr(account, "daytrade_count", None)
         )
-        if day_trade_count is None:
-            day_trade_count = len(records)
+        local_day_trade_count = len(records)
+        if settings.pdt_use_broker_daytrade_count and broker_day_trade_count is not None:
+            day_trade_count = broker_day_trade_count
+            count_source = "broker"
+        else:
+            day_trade_count = local_day_trade_count
+            count_source = "local"
         today = _market_date(datetime.now(UTC))
         would_be_day_trade = _has_filled_buy_on_date(orders, normalized_symbol, today)
         allowed = (
@@ -307,15 +316,26 @@ class AlpacaBroker:
             else (
                 "Day trade allowed under rolling five-business-day limit."
                 if allowed
-                else "Day trade blocked to avoid exceeding the rolling five-business-day PDT limit."
+                else (
+                    "Day trade blocked to avoid exceeding the rolling five-business-day PDT limit "
+                    f"using {count_source} count."
+                )
             )
         )
+        if broker_day_trade_count is not None and broker_day_trade_count != local_day_trade_count:
+            reason = (
+                f"{reason} Alpaca reports {broker_day_trade_count}; local filled-order scan reports "
+                f"{local_day_trade_count}."
+            )
 
         return DayTradeGuardResult(
             symbol=normalized_symbol,
             would_be_day_trade=would_be_day_trade,
             allowed=allowed,
             day_trades_5_business_days=day_trade_count,
+            local_day_trades_5_business_days=local_day_trade_count,
+            broker_day_trades_5_business_days=broker_day_trade_count,
+            count_source=count_source,
             max_day_trades_5_business_days=settings.max_day_trades_5_business_days,
             records=records,
             reason=reason,
@@ -516,6 +536,139 @@ class AlpacaBroker:
             raw_message=(
                 f"Alpaca accepted OCO protection for {normalized_symbol}: "
                 f"take profit {take_profit_price}, stop {stop_price}."
+            ),
+        )
+
+    def get_option_chain(
+        self,
+        underlying: str,
+        *,
+        dte_min: int,
+        dte_max: int,
+    ) -> OptionsChainSnapshot:
+        """Fetch a filtered option chain snapshot for the given underlying.
+
+        NOTE: verify Alpaca options SDK field names with a live call before
+        first real submission. The alpaca-py options module shape can shift
+        between SDK releases.
+        """
+
+        from alpaca.data.historical.option import OptionHistoricalDataClient
+        from alpaca.data.requests import OptionChainRequest
+        from alpaca.data.requests import StockLatestTradeRequest
+
+        if self._options_data_client is None:
+            self._options_data_client = OptionHistoricalDataClient(
+                settings.alpaca_api_key,
+                settings.alpaca_secret_key,
+            )
+
+        normalized = underlying.upper()
+        today = datetime.now(UTC).date()
+        expiration_gte = today + timedelta(days=max(0, dte_min))
+        expiration_lte = today + timedelta(days=max(dte_min, dte_max))
+
+        chain_response = self._options_data_client.get_option_chain(
+            OptionChainRequest(
+                underlying_symbol=normalized,
+                expiration_date_gte=expiration_gte,
+                expiration_date_lte=expiration_lte,
+            )
+        )
+
+        # get_option_chain returns dict[occ_symbol, OptionsSnapshot]
+        contracts: list[OptionContract] = []
+        for occ_symbol, snapshot in chain_response.items():
+            parsed = _parse_occ_symbol(occ_symbol)
+            if parsed is None:
+                continue
+            expiration, strike, contract_type = parsed
+            latest_quote = getattr(snapshot, "latest_quote", None)
+            latest_trade = getattr(snapshot, "latest_trade", None)
+            greeks = getattr(snapshot, "greeks", None)
+            contracts.append(
+                OptionContract(
+                    occ_symbol=occ_symbol,
+                    underlying=normalized,
+                    expiration=expiration,
+                    strike=strike,
+                    contract_type=contract_type,
+                    multiplier=100,
+                    bid=self._optional_float(getattr(latest_quote, "bid_price", None)),
+                    ask=self._optional_float(getattr(latest_quote, "ask_price", None)),
+                    last=self._optional_float(getattr(latest_trade, "price", None)),
+                    open_interest=_optional_int(getattr(snapshot, "open_interest", None)),
+                    volume=_optional_int(getattr(latest_trade, "size", None)),
+                    delta=self._optional_float(getattr(greeks, "delta", None)) if greeks else None,
+                    implied_volatility=self._optional_float(
+                        getattr(snapshot, "implied_volatility", None)
+                    ),
+                )
+            )
+
+        underlying_price: float | None = None
+        try:
+            trade = self.data_client.get_stock_latest_trade(
+                StockLatestTradeRequest(symbol_or_symbols=normalized)
+            )
+            entry = trade.get(normalized) if isinstance(trade, dict) else None
+            underlying_price = self._optional_float(getattr(entry, "price", None))
+        except Exception:
+            underlying_price = None
+
+        return OptionsChainSnapshot(
+            underlying=normalized,
+            underlying_price=underlying_price,
+            contracts=contracts,
+        )
+
+    def submit_options_order(self, intent: OptionsExecutionIntent) -> BrokerOrderReceipt:
+        """Submit an approved options execution intent to Alpaca.
+
+        Level 1 orders are single-leg limit orders against an OCC symbol.
+        NOTE: verify with a paper round-trip before the first live call.
+        """
+
+        from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
+        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
+
+        side = OrderSide.SELL if intent.action in {"sell_to_open", "sell_to_close"} else OrderSide.BUY
+        tif = TimeInForce.DAY if intent.time_in_force == "day" else TimeInForce.GTC
+
+        if intent.order_type == "limit" and intent.limit_price is not None:
+            request = LimitOrderRequest(
+                symbol=intent.occ_symbol,
+                qty=intent.contracts,
+                side=side,
+                type=OrderType.LIMIT,
+                time_in_force=tif,
+                limit_price=round(float(intent.limit_price), 2),
+                client_order_id=intent.client_order_id,
+            )
+        else:
+            request = MarketOrderRequest(
+                symbol=intent.occ_symbol,
+                qty=intent.contracts,
+                side=side,
+                time_in_force=tif,
+                client_order_id=intent.client_order_id,
+            )
+
+        order = self.client.submit_order(order_data=request)
+        return BrokerOrderReceipt(
+            broker_order_id=str(order.id),
+            intent_id=intent.intent_id,
+            status=str(order.status),
+            symbol=intent.occ_symbol,
+            side="sell" if side == OrderSide.SELL else "buy",
+            submitted_notional=(
+                float(intent.limit_price) * intent.contracts * 100
+                if intent.limit_price is not None
+                else 0.0
+            ),
+            raw_message=(
+                f"Alpaca accepted options {intent.action} for {intent.occ_symbol} "
+                f"x{intent.contracts} (client id {intent.client_order_id})."
             ),
         )
 
@@ -941,6 +1094,35 @@ def _optional_int(value: object | None) -> int | None:
         return None
 
     return int(value)
+
+
+def _parse_occ_symbol(occ_symbol: str) -> tuple[str, float, str] | None:
+    """Parse an OCC option symbol into (expiration, strike, contract_type).
+
+    OCC format: <root><YYMMDD><C|P><strike*1000 padded to 8 digits>
+    Example: AAPL250620C00230000 → ("2025-06-20", 230.0, "call")
+    Root may include digits/letters; we scan from the right.
+    """
+
+    if len(occ_symbol) < 15:
+        return None
+    try:
+        strike_raw = occ_symbol[-8:]
+        right = occ_symbol[-9]
+        date_raw = occ_symbol[-15:-9]
+        if not strike_raw.isdigit() or not date_raw.isdigit():
+            return None
+        year = 2000 + int(date_raw[0:2])
+        month = int(date_raw[2:4])
+        day = int(date_raw[4:6])
+        expiration = f"{year:04d}-{month:02d}-{day:02d}"
+        strike = int(strike_raw) / 1000.0
+        contract_type = "call" if right.upper() == "C" else "put" if right.upper() == "P" else None
+        if contract_type is None:
+            return None
+        return expiration, strike, contract_type
+    except (ValueError, IndexError):
+        return None
 
 
 def get_broker() -> LocalPaperBroker | AlpacaBroker:

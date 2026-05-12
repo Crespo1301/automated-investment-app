@@ -44,6 +44,7 @@ def isolate_runtime_settings(tmp_path):
         "trading_mode": settings.trading_mode,
         "allowed_symbols": settings.allowed_symbols,
         "position_size_percent": settings.position_size_percent,
+        "max_open_positions": settings.max_open_positions,
         "anthropic_api_key": settings.anthropic_api_key,
         "anthropic_model": settings.anthropic_model,
         "allow_live_trading": settings.allow_live_trading,
@@ -57,6 +58,7 @@ def isolate_runtime_settings(tmp_path):
         "autopilot_take_profit_percent": settings.autopilot_take_profit_percent,
         "minimum_order_notional": settings.minimum_order_notional,
         "max_day_trades_5_business_days": settings.max_day_trades_5_business_days,
+        "pdt_use_broker_daytrade_count": settings.pdt_use_broker_daytrade_count,
         "strategy_breakout_threshold": settings.strategy_breakout_threshold,
         "strategy_min_volume": settings.strategy_min_volume,
         "strategy_stop_loss_percent": settings.strategy_stop_loss_percent,
@@ -84,6 +86,7 @@ def isolate_runtime_settings(tmp_path):
     settings.trading_mode = "paper"
     settings.allowed_symbols = DEFAULT_ALLOWED_SYMBOLS
     settings.position_size_percent = 0.25
+    settings.max_open_positions = 6
     settings.anthropic_api_key = None
     settings.anthropic_model = "claude-opus-4-7"
     settings.allow_live_trading = False
@@ -97,6 +100,7 @@ def isolate_runtime_settings(tmp_path):
     settings.autopilot_take_profit_percent = 3
     settings.minimum_order_notional = 1
     settings.max_day_trades_5_business_days = 3
+    settings.pdt_use_broker_daytrade_count = False
     settings.strategy_breakout_threshold = 0.0025
     settings.strategy_min_volume = 25_000
     settings.strategy_stop_loss_percent = 0.025
@@ -653,6 +657,68 @@ def test_day_trade_detection_respects_order_sequence() -> None:
     records = _detect_day_trade_records(orders)
 
     assert [record.symbol for record in records] == ["SPY"]
+
+
+def test_day_trade_guard_surfaces_broker_local_count_disagreement() -> None:
+    eastern = ZoneInfo("America/New_York")
+    market_date = datetime.now(UTC).astimezone(eastern).date()
+    while market_date.weekday() >= 5:
+        market_date = market_date - timedelta(days=1)
+    prior_market_date = market_date - timedelta(days=1)
+    while prior_market_date.weekday() >= 5:
+        prior_market_date = prior_market_date - timedelta(days=1)
+    today = datetime.combine(market_date, time(10, 0), tzinfo=eastern).astimezone(UTC)
+    prior = datetime.combine(prior_market_date, time(10, 0), tzinfo=eastern).astimezone(UTC)
+    orders = [
+        BrokerOrderSummary(
+            broker_order_id="spy_buy_prior",
+            symbol="SPY",
+            side="OrderSide.BUY",
+            order_type="OrderType.MARKET",
+            status="OrderStatus.FILLED",
+            filled_quantity=0.01,
+            filled_at=prior,
+        ),
+        BrokerOrderSummary(
+            broker_order_id="spy_sell_prior",
+            symbol="SPY",
+            side="OrderSide.SELL",
+            order_type="OrderType.MARKET",
+            status="OrderStatus.FILLED",
+            filled_quantity=0.01,
+            filled_at=prior.replace(hour=15),
+        ),
+        BrokerOrderSummary(
+            broker_order_id="aapl_buy_today",
+            symbol="AAPL",
+            side="OrderSide.BUY",
+            order_type="OrderType.MARKET",
+            status="OrderStatus.FILLED",
+            filled_quantity=0.01,
+            filled_at=today,
+        ),
+    ]
+
+    class FakeAccount:
+        daytrade_count = "3"
+
+    class FakeClient:
+        def get_account(self):
+            return FakeAccount()
+
+    broker = object.__new__(AlpacaBroker)
+    broker.client = FakeClient()
+    broker.list_recent_orders = lambda limit=10: orders
+
+    result = broker.get_day_trade_guard("AAPL")
+
+    assert result.would_be_day_trade is True
+    assert result.allowed is True
+    assert result.count_source == "local"
+    assert result.day_trades_5_business_days == 1
+    assert result.local_day_trades_5_business_days == 1
+    assert result.broker_day_trades_5_business_days == 3
+    assert "Alpaca reports 3" in result.reason
 
 
 def test_local_heuristic_score_is_bounded_and_explainable() -> None:

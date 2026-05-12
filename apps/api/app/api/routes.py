@@ -43,6 +43,8 @@ from app.services.local_worker import (
     run_queue_for_open_cycle,
     run_single_cycle,
 )
+from app.core.config import settings
+from app.services.options_worker import recent_options_records
 from app.services.protection_plan import build_protection_plan
 from app.services.readiness import get_morning_readiness
 
@@ -289,6 +291,20 @@ def performance_daily_recap() -> DailyTradeRecap:
     """Return today's provider, strategy, and compounding recap."""
 
     return get_daily_trade_recap()
+
+
+@router.get(
+    "/api/options/recent",
+    tags=["options"],
+)
+def options_recent(limit: int = 25) -> dict[str, object]:
+    """Return the latest options-cycle records persisted by the worker."""
+
+    return {
+        "enabled": settings.options_enabled,
+        "max_level": settings.options_max_level,
+        "records": recent_options_records(limit=limit),
+    }
 
 
 @router.post(

@@ -279,6 +279,9 @@ class DayTradeGuardResult(BaseModel):
     would_be_day_trade: bool
     allowed: bool
     day_trades_5_business_days: int
+    local_day_trades_5_business_days: int = 0
+    broker_day_trades_5_business_days: int | None = None
+    count_source: str = "local"
     max_day_trades_5_business_days: int
     records: list[DayTradeRecord]
     reason: str

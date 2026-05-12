@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     # the buffer doesn't cliff at Alpaca's $1 minimum as the portfolio grows.
     cash_reserve_percent_of_portfolio: float = 0.10
     max_day_trades_5_business_days: int = 3
+    # Alpaca exposes ``account.daytrade_count`` as the broker-side count for
+    # the last five trading days. Keep our local rolling order-derived count
+    # as the default guard input so stale broker metadata does not leave the
+    # app locked after older day trades age out. Alpaca still performs final
+    # PDT protection on submission.
+    pdt_use_broker_daytrade_count: bool = False
     max_daily_loss: float = 2.0
     strategy_breakout_threshold: float = 0.0025
     strategy_min_volume: float = 25_000
