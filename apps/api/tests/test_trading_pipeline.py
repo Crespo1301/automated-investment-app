@@ -64,6 +64,10 @@ def isolate_runtime_settings(tmp_path):
         "high_vol_symbols": settings.high_vol_symbols,
         "high_vol_position_size_multiplier": settings.high_vol_position_size_multiplier,
         "high_vol_min_pdt_slots_for_entry": settings.high_vol_min_pdt_slots_for_entry,
+        "pdt_capped_swing_entry_strategy_ids": settings.pdt_capped_swing_entry_strategy_ids,
+        "pdt_capped_swing_min_score": settings.pdt_capped_swing_min_score,
+        "pdt_capped_swing_max_spread_bps": settings.pdt_capped_swing_max_spread_bps,
+        "pdt_capped_swing_position_size_multiplier": settings.pdt_capped_swing_position_size_multiplier,
         "small_win_min_pdt_slots_to_exit": settings.small_win_min_pdt_slots_to_exit,
         "small_win_min_net_profit_dollars": settings.small_win_min_net_profit_dollars,
         "low_portfolio_threshold": settings.low_portfolio_threshold,
@@ -117,6 +121,10 @@ def isolate_runtime_settings(tmp_path):
     settings.high_vol_symbols = "IONQ,NIO,HOOD"
     settings.high_vol_position_size_multiplier = 0.5
     settings.high_vol_min_pdt_slots_for_entry = 2
+    settings.pdt_capped_swing_entry_strategy_ids = "opening_range_breakout_v1"
+    settings.pdt_capped_swing_min_score = 0.78
+    settings.pdt_capped_swing_max_spread_bps = 40
+    settings.pdt_capped_swing_position_size_multiplier = 0.5
     settings.small_win_min_pdt_slots_to_exit = 2
     settings.small_win_min_net_profit_dollars = 0.10
     settings.low_portfolio_threshold = 50
@@ -2466,6 +2474,41 @@ def test_pdt_traps_new_entry_respects_disable_flag(monkeypatch) -> None:
     monkeypatch.setattr(settings, "swing_safe_strategy_ids", "")
     monkeypatch.setattr(settings, "high_vol_symbols", "")
     assert _pdt_traps_new_entry(3, 3, "micro_breakout_v1", "SPY") is False
+
+
+def test_pdt_traps_new_entry_allows_strong_tight_low_vol_opening_range(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "block_entries_when_pdt_maxed", True)
+    monkeypatch.setattr(settings, "swing_safe_strategy_ids", "")
+    monkeypatch.setattr(settings, "high_vol_symbols", "")
+    monkeypatch.setattr(settings, "pdt_capped_swing_entry_strategy_ids", "opening_range_breakout_v1")
+    monkeypatch.setattr(settings, "pdt_capped_swing_min_score", 0.78)
+    monkeypatch.setattr(settings, "pdt_capped_swing_max_spread_bps", 40)
+
+    assert _pdt_traps_new_entry(
+        3,
+        3,
+        "opening_range_breakout_v1",
+        "GOOGL",
+        spread_bps=22,
+        score=0.8,
+    ) is False
+
+
+def test_pdt_traps_new_entry_blocks_wide_pdt_capped_swing_candidate(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "block_entries_when_pdt_maxed", True)
+    monkeypatch.setattr(settings, "swing_safe_strategy_ids", "")
+    monkeypatch.setattr(settings, "high_vol_symbols", "")
+    monkeypatch.setattr(settings, "pdt_capped_swing_entry_strategy_ids", "opening_range_breakout_v1")
+    monkeypatch.setattr(settings, "pdt_capped_swing_max_spread_bps", 40)
+
+    assert _pdt_traps_new_entry(
+        3,
+        3,
+        "opening_range_breakout_v1",
+        "GOOGL",
+        spread_bps=45,
+        score=0.8,
+    ) is True
 
 
 def test_pdt_traps_new_entry_blocks_high_vol_when_slots_are_low(monkeypatch) -> None:

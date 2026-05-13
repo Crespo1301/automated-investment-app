@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     high_vol_symbols: str = DEFAULT_HIGH_VOL_SYMBOLS
     high_vol_position_size_multiplier: float = 0.5
     high_vol_min_pdt_slots_for_entry: int = 2
+    pdt_capped_swing_entry_strategy_ids: str = "opening_range_breakout_v1"
+    pdt_capped_swing_min_score: float = 0.78
+    pdt_capped_swing_max_spread_bps: float = 40.0
+    pdt_capped_swing_position_size_multiplier: float = 0.5
     small_win_min_pdt_slots_to_exit: int = 2
     small_win_min_net_profit_dollars: float = 0.10
     low_portfolio_threshold: float = 50.0
@@ -198,6 +202,16 @@ def configured_swing_safe_strategies() -> set[str]:
     return {
         sid.strip()
         for sid in settings.swing_safe_strategy_ids.split(",")
+        if sid.strip()
+    }
+
+
+def configured_pdt_capped_swing_strategies() -> set[str]:
+    """Strategy IDs that may convert to reduced-size swing entries at PDT cap."""
+
+    return {
+        sid.strip()
+        for sid in settings.pdt_capped_swing_entry_strategy_ids.split(",")
         if sid.strip()
     }
 

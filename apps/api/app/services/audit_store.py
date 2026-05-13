@@ -321,6 +321,8 @@ def get_daily_trade_recap(date: str | None = None) -> DailyTradeRecap:
     candidate_count = 0
     approved_count = 0
     rejected_count = 0
+    pdt_rejected_count = 0
+    spread_rejected_count = 0
     submitted_orders = 0
 
     for event in pipeline_runs:
@@ -351,6 +353,14 @@ def get_daily_trade_recap(date: str | None = None) -> DailyTradeRecap:
                     strategy_counts[str(candidate.get("strategy_id"))]["approved"] += 1
             elif state == "rejected":
                 rejected_count += 1
+                reasons = [
+                    str(reason)
+                    for reason in risk_decision.get("reasons", [])
+                ]
+                if any("PDT count" in reason for reason in reasons):
+                    pdt_rejected_count += 1
+                if any("spread" in reason.lower() for reason in reasons):
+                    spread_rejected_count += 1
 
         if broker_receipt:
             submitted_orders += 1
@@ -394,6 +404,8 @@ def get_daily_trade_recap(date: str | None = None) -> DailyTradeRecap:
         candidate_count=candidate_count,
         approved_count=approved_count,
         rejected_count=rejected_count,
+        pdt_rejected_count=pdt_rejected_count,
+        spread_rejected_count=spread_rejected_count,
         submitted_orders=submitted_orders,
         provider_usage=provider_usage,
         strategy_usage=strategy_usage,

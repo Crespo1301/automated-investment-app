@@ -195,6 +195,8 @@ export type DailyTradeRecap = {
   candidate_count: number;
   approved_count: number;
   rejected_count: number;
+  pdt_rejected_count: number;
+  spread_rejected_count: number;
   submitted_orders: number;
   provider_usage: ProviderUsageSummary[];
   strategy_usage: StrategyUsageSummary[];

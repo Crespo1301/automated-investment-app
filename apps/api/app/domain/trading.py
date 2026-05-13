@@ -390,6 +390,8 @@ class DailyTradeRecap(BaseModel):
     candidate_count: int = 0
     approved_count: int = 0
     rejected_count: int = 0
+    pdt_rejected_count: int = 0
+    spread_rejected_count: int = 0
     submitted_orders: int = 0
     provider_usage: list[ProviderUsageSummary]
     strategy_usage: list[StrategyUsageSummary]

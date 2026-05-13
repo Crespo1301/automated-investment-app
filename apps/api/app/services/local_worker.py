@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.core.config import (
     configured_high_vol_symbols,
+    configured_pdt_capped_swing_strategies,
     configured_swing_safe_strategies,
     configured_symbols,
     settings,
@@ -177,6 +178,8 @@ def run_single_cycle(
         limits.max_day_trades_5_business_days,
         candidate.strategy_id,
         candidate.symbol,
+        candidate.spread_bps,
+        scored_candidate.ai_score.score,
     ):
         risk_decision = RiskDecision(
             state="rejected",
@@ -190,6 +193,35 @@ def run_single_cycle(
             ],
         )
         execution_intent = None
+    elif execution_intent is not None and _is_pdt_capped_swing_entry(
+        portfolio_state.day_trades_5_business_days,
+        limits.max_day_trades_5_business_days,
+        candidate.strategy_id,
+        candidate.symbol,
+        candidate.spread_bps,
+        scored_candidate.ai_score.score,
+    ):
+        multiplier = max(0.0, min(1.0, settings.pdt_capped_swing_position_size_multiplier))
+        approved_notional = max(
+            settings.minimum_order_notional,
+            execution_intent.approved_notional * multiplier,
+        )
+        approved_notional = min(execution_intent.approved_notional, approved_notional)
+        execution_intent = execution_intent.model_copy(
+            update={"approved_notional": int(approved_notional * 100) / 100}
+        )
+        risk_decision = risk_decision.model_copy(
+            update={
+                "approved_notional": execution_intent.approved_notional,
+                "reasons": [
+                    *risk_decision.reasons,
+                    (
+                        "PDT-capped swing entry allowed: reduced size, low/medium-vol symbol, "
+                        "tight spread, and strong score."
+                    ),
+                ],
+            }
+        )
 
     safety_state = get_safety_state()
     if execution_intent is not None and safety_state.kill_switch_enabled:
@@ -402,6 +434,8 @@ def _pdt_traps_new_entry(
     max_day_trades: int,
     strategy_id: str,
     symbol: str,
+    spread_bps: float | None = None,
+    score: float | None = None,
 ) -> bool:
     if max_day_trades <= 0:
         return False
@@ -418,7 +452,37 @@ def _pdt_traps_new_entry(
         return False
     if slots_remaining > 0:
         return False
+    if _is_pdt_capped_swing_entry(
+        day_trade_count,
+        max_day_trades,
+        strategy_id,
+        symbol,
+        spread_bps,
+        score,
+    ):
+        return False
     return strategy_id not in configured_swing_safe_strategies()
+
+
+def _is_pdt_capped_swing_entry(
+    day_trade_count: int,
+    max_day_trades: int,
+    strategy_id: str,
+    symbol: str,
+    spread_bps: float | None,
+    score: float | None,
+) -> bool:
+    if max_day_trades <= 0 or day_trade_count < max_day_trades:
+        return False
+    if strategy_id not in configured_pdt_capped_swing_strategies():
+        return False
+    if symbol.upper() in configured_high_vol_symbols():
+        return False
+    if spread_bps is None or spread_bps > settings.pdt_capped_swing_max_spread_bps:
+        return False
+    if score is None or score < settings.pdt_capped_swing_min_score:
+        return False
+    return True
 
 
 def _apply_symbol_volatility_sizing(candidate: TradeCandidate) -> TradeCandidate:

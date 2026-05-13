@@ -541,6 +541,11 @@ export function PerformanceSparkline({ points }: { points: PerformancePoint[] })
 
 export function SessionScorecard({ recap }: { recap: DailyTradeRecap | null }) {
   const approvalRate = recap && recap.candidate_count > 0 ? recap.approved_count / recap.candidate_count : 0;
+  const actionableCandidates = recap
+    ? Math.max(0, recap.candidate_count - recap.pdt_rejected_count)
+    : 0;
+  const actionableApprovalRate =
+    recap && actionableCandidates > 0 ? recap.approved_count / actionableCandidates : 0;
   const submissionRate = recap && recap.candidate_count > 0 ? recap.submitted_orders / recap.candidate_count : 0;
 
   return (
@@ -550,12 +555,16 @@ export function SessionScorecard({ recap }: { recap: DailyTradeRecap | null }) {
         <strong>{recap?.candidate_count ?? 0}</strong>
       </div>
       <div>
-        <span>Approval rate</span>
+        <span>Actionable approvals</span>
+        <strong>{percentFormatter(actionableApprovalRate)}</strong>
+      </div>
+      <div>
+        <span>Raw approvals</span>
         <strong>{percentFormatter(approvalRate)}</strong>
       </div>
       <div>
-        <span>Submit rate</span>
-        <strong>{percentFormatter(submissionRate)}</strong>
+        <span>PDT blocks</span>
+        <strong>{recap?.pdt_rejected_count ?? 0}</strong>
       </div>
       <div>
         <span>Day Δ</span>
