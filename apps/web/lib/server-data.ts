@@ -2,8 +2,10 @@ import type {
   AuditSummary,
   BrokerReconciliationSnapshot,
   DailyTradeRecap,
+  DefragmentationReport,
   ExitCheckResult,
   PerformanceHistory,
+  ProfitLockReport,
   ProtectionPlan,
   RiskLimits,
 } from "@/lib/contracts";
@@ -40,6 +42,14 @@ export function getProtectionPlan() {
 
 export function getExitCheck() {
   return getApi<ExitCheckResult>("/api/risk/exit-check");
+}
+
+export function getProfitLocks() {
+  return getApi<ProfitLockReport>("/api/risk/profit-locks");
+}
+
+export function getDefragmentationCandidates() {
+  return getApi<DefragmentationReport>("/api/risk/defragmentation-candidates");
 }
 
 export function getDailyRecap() {

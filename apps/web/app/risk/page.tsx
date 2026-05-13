@@ -2,7 +2,9 @@ import { PdtMeter } from "@/components/analytics-visuals";
 import { DashboardShell } from "@/components/dashboard-shell";
 import {
   getDailyRecap,
+  getDefragmentationCandidates,
   getExitCheck,
+  getProfitLocks,
   getProtectionPlan,
   getReconciliation,
   getSafetyStatus,
@@ -10,11 +12,13 @@ import {
 import { currencyFormatter } from "@/lib/format";
 
 export default async function RiskPage() {
-  const [reconciliation, safety, protectionPlan, exitCheck, recap] = await Promise.all([
+  const [reconciliation, safety, protectionPlan, exitCheck, profitLocks, defrag, recap] = await Promise.all([
     getReconciliation(),
     getSafetyStatus(),
     getProtectionPlan(),
     getExitCheck(),
+    getProfitLocks(),
+    getDefragmentationCandidates(),
     getDailyRecap(),
   ]);
 
@@ -37,8 +41,76 @@ export default async function RiskPage() {
         <article className="panel">
           <div className="section-title">
             <div>
+              <h2>Profit Locks</h2>
+              <p>Take-profit signals held by PDT, queued as next-session exit priorities.</p>
+            </div>
+            <span className={profitLocks?.entries.length ? "state-pill state-warning" : "state-pill state-healthy"}>
+              {profitLocks?.entries.length ? `${profitLocks.entries.length} locked` : "clear"}
+            </span>
+          </div>
+          <div className="list">
+            {profitLocks && profitLocks.entries.length > 0 ? (
+              profitLocks.entries.map((entry) => (
+                <div className="list-item" key={`${entry.symbol}-${entry.locked_at ?? "lock"}`}>
+                  <div className="row-top">
+                    <strong className="symbol">{entry.symbol}</strong>
+                    <span className={(entry.unrealized_pl ?? 0) >= 0 ? "positive" : "negative"}>
+                      {entry.unrealized_pl != null ? currencyFormatter(entry.unrealized_pl) : "-"}
+                    </span>
+                  </div>
+                  <p className="thesis">
+                    Current {entry.current_price != null ? currencyFormatter(entry.current_price) : "-"} vs avg{" "}
+                    {entry.average_entry_price != null ? currencyFormatter(entry.average_entry_price) : "-"}.
+                    Value {entry.market_value != null ? ` ${currencyFormatter(entry.market_value)}` : " -"}.
+                  </p>
+                  <p className="thesis">{entry.block_reason}</p>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state">{profitLocks?.notes[0] ?? "No profit-locked carries recorded."}</div>
+            )}
+          </div>
+        </article>
+
+        <article className="panel">
+          <div className="section-title">
+            <div>
+              <h2>Defragmentation</h2>
+              <p>Stale tiny lots that can reclaim buying power without spending a PDT slot.</p>
+            </div>
+            <span className={defrag?.candidates.length ? "state-pill state-info" : "state-pill state-healthy"}>
+              {defrag?.candidates.length ? `${defrag.candidates.length} candidates` : "none"}
+            </span>
+          </div>
+          <div className="list">
+            {defrag && defrag.candidates.length > 0 ? (
+              defrag.candidates.map((candidate) => (
+                <div className="list-item" key={candidate.symbol}>
+                  <div className="row-top">
+                    <strong className="symbol">{candidate.symbol}</strong>
+                    <span className={candidate.unrealized_pl >= 0 ? "positive" : "negative"}>
+                      {currencyFormatter(candidate.unrealized_pl)}
+                    </span>
+                  </div>
+                  <p className="thesis">
+                    {currencyFormatter(candidate.market_value)} lot held for {Math.floor(candidate.age_minutes / 60)}h{" "}
+                    {candidate.age_minutes % 60}m. Last buy {new Date(candidate.last_buy_filled_at).toLocaleString()}.
+                  </p>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state">{defrag?.notes[0] ?? "No defragmentation candidates right now."}</div>
+            )}
+          </div>
+        </article>
+      </section>
+
+      <section className="content-grid">
+        <article className="panel">
+          <div className="section-title">
+            <div>
               <h2>PDT window</h2>
-              <p>Backed by Alpaca&apos;s rolling daytrade_count. Caps same-day sells, not buys.</p>
+              <p>Backed by the rolling day-trade guard. Caps same-day exits and fresh trapped entries.</p>
             </div>
           </div>
           <PdtMeter daytradeCount={account?.daytrade_count} />
@@ -78,8 +150,8 @@ export default async function RiskPage() {
             </div>
           </div>
           <p className="thesis" style={{ marginTop: 12 }}>
-            No raw daily order cap. Buys flow through risk, buying-power, open-position, min-notional, and kill-switch checks.
-            Same-day sells additionally honor the PDT meter above.
+            No raw daily order cap. Entries flow through risk, buying-power, open-position, PDT-slot, min-notional,
+            and kill-switch checks. Same-day exits honor the PDT meter above.
           </p>
         </article>
       </section>

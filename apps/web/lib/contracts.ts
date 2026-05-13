@@ -160,6 +160,34 @@ export type ProtectionPlan = {
   notes: string[];
 };
 
+export type ProfitLockEntry = {
+  symbol: string;
+  locked_at?: string | null;
+  block_reason: string;
+  average_entry_price?: number | null;
+  current_price?: number | null;
+  market_value?: number | null;
+  unrealized_pl?: number | null;
+};
+
+export type ProfitLockReport = {
+  entries: ProfitLockEntry[];
+  notes: string[];
+};
+
+export type DefragmentationCandidate = {
+  symbol: string;
+  market_value: number;
+  unrealized_pl: number;
+  last_buy_filled_at: string;
+  age_minutes: number;
+};
+
+export type DefragmentationReport = {
+  candidates: DefragmentationCandidate[];
+  notes: string[];
+};
+
 export type PerformancePoint = {
   timestamp: string;
   portfolio_value: number;
