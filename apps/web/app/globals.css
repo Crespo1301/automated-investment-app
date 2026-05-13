@@ -49,10 +49,7 @@ html {
 
 body {
   min-height: 100vh;
-  background:
-    radial-gradient(1200px 600px at 80% -10%, rgba(34, 197, 94, 0.05), transparent 70%),
-    radial-gradient(900px 500px at -10% 30%, rgba(56, 189, 248, 0.04), transparent 70%),
-    var(--bg);
+  background: var(--bg);
 }
 
 a {
@@ -111,7 +108,7 @@ button {
   height: 38px;
   place-items: center;
   border: 1px solid var(--accent-line);
-  border-radius: 8px;
+  border-radius: 3px;
   background: var(--accent-soft);
   color: var(--accent);
   font-family: var(--mono);
@@ -141,7 +138,7 @@ button {
   align-items: center;
   gap: 10px;
   padding: 9px 12px;
-  border-radius: 6px;
+  border-radius: 2px;
   color: var(--text-soft);
   font-size: 0.92rem;
   border: 1px solid transparent;
@@ -169,7 +166,6 @@ button {
 
 .nav-item.active::before {
   background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .sidebar-footer {
@@ -179,7 +175,7 @@ button {
   margin-top: auto;
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 2px;
   background: var(--panel-2);
   color: var(--text-soft);
   font-size: 0.82rem;
@@ -187,16 +183,14 @@ button {
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
   background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .danger-dot {
   background: var(--danger);
-  box-shadow: 0 0 0 3px var(--danger-soft);
 }
 
 .workspace {
@@ -359,8 +353,8 @@ button {
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 0;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: linear-gradient(180deg, var(--panel) 0%, var(--bg-elev) 100%);
+  border-radius: 4px;
+  background: var(--panel);
   overflow: hidden;
 }
 
@@ -414,7 +408,7 @@ button {
   background: var(--panel);
   color: var(--text-soft);
   font-size: 0.9rem;
-  border-radius: 6px;
+  border-radius: 2px;
 }
 
 .notice-row strong {
@@ -441,10 +435,10 @@ button {
 }
 
 .panel {
-  padding: 18px;
+  padding: 16px;
   border: 1px solid var(--line);
   background: var(--panel);
-  border-radius: 8px;
+  border-radius: 3px;
   min-width: 0;
 }
 
@@ -506,7 +500,7 @@ button {
   padding: 10px 12px;
   border: 1px solid var(--line);
   background: var(--panel-2);
-  border-radius: 6px;
+  border-radius: 2px;
 }
 
 .performance-metrics span,
@@ -551,7 +545,7 @@ button {
 .compact-list {
   display: grid;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
@@ -579,7 +573,7 @@ button {
   position: relative;
   min-height: 220px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 2px;
   background:
     linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
@@ -597,14 +591,13 @@ button {
 .chart-line {
   fill: none;
   stroke: var(--accent);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.6;
-  filter: drop-shadow(0 0 6px rgba(34, 197, 94, 0.35));
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  stroke-width: 1.4;
 }
 
 .chart-area {
-  fill: url(#chart-area-gradient);
+  fill: rgba(34, 197, 94, 0.12);
   stroke: none;
 }
 
@@ -635,7 +628,7 @@ button {
   padding: 12px;
   border: 1px solid var(--line);
   background: var(--panel-2);
-  border-radius: 6px;
+  border-radius: 2px;
 }
 
 .mini-panel strong {
@@ -652,7 +645,7 @@ button {
   padding: 10px 12px;
   border: 1px solid var(--line);
   background: var(--panel-2);
-  border-radius: 6px;
+  border-radius: 2px;
 }
 
 .bar-label {
@@ -782,7 +775,7 @@ button {
   gap: 10px;
   padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 2px;
   background: var(--panel-2);
 }
 
@@ -863,7 +856,7 @@ button {
 .order-table {
   display: grid;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
@@ -931,7 +924,7 @@ button {
   display: grid;
   gap: 0;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
@@ -952,7 +945,7 @@ button {
   display: grid;
   gap: 0;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
@@ -985,7 +978,7 @@ button {
 }
 
 .trading-action {
-  background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+  background: var(--panel-2);
 }
 
 .inline-form {
@@ -1017,8 +1010,7 @@ button {
 
 .inline-form input:focus {
   outline: none;
-  border-color: var(--accent-line);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .table-action {
@@ -1032,7 +1024,7 @@ button {
 .autopilot-grid {
   display: grid;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
@@ -1087,7 +1079,7 @@ button {
   background: var(--bg-elev);
   color: var(--accent);
   font-weight: 600;
-  border-radius: 6px;
+  border-radius: 2px;
   font-family: var(--mono);
   font-size: 0.82rem;
 }
@@ -1107,7 +1099,7 @@ button {
   padding: 14px;
   border: 1px solid var(--line);
   background: var(--panel-2);
-  border-radius: 8px;
+  border-radius: 3px;
 }
 
 .pdt-cells {
@@ -1127,7 +1119,6 @@ button {
 .pdt-cell.is-used {
   background: var(--accent);
   border-color: var(--accent);
-  box-shadow: 0 0 12px rgba(34, 197, 94, 0.25);
 }
 
 .pdt-cell.is-warn {
@@ -1175,7 +1166,7 @@ button {
   padding: 9px 12px;
   border: 1px solid var(--line);
   background: var(--panel-2);
-  border-radius: 6px;
+  border-radius: 2px;
 }
 
 .anatomy-row .anatomy-label {
@@ -1204,7 +1195,7 @@ button {
 /* Compounding matrix */
 .matrix-frame {
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
@@ -1265,7 +1256,7 @@ button {
   padding: 10px 12px;
   border: 1px solid var(--line);
   background: var(--panel-2);
-  border-radius: 6px;
+  border-radius: 2px;
 }
 
 .provider-row .provider-name {

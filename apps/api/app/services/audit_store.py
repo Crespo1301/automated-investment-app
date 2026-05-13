@@ -99,6 +99,92 @@ def record_reconciliation_snapshot(snapshot: BrokerReconciliationSnapshot) -> No
         )
 
 
+def profit_locks_path() -> Path:
+    return runtime_dir() / "profit-locks.json"
+
+
+def list_profit_locks() -> list[dict[str, Any]]:
+    """Return the currently active profit-lock entries (per symbol)."""
+
+    path = profit_locks_path()
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    if isinstance(raw, dict):
+        return list(raw.values())
+    if isinstance(raw, list):
+        return raw
+    return []
+
+
+def record_profit_lock(
+    *,
+    symbol: str,
+    current_price: float | None,
+    average_entry_price: float | None,
+    unrealized_pl: float | None,
+    market_value: float | None,
+    block_reason: str,
+) -> dict[str, Any]:
+    """Persist (or refresh) a take-profit-blocked carry for one symbol.
+
+    Stored as a small dict keyed by symbol so subsequent ticks can detect
+    the lock and stop spamming blocked-exit heartbeats. The audit row is
+    also appended to ``autopilot-events.jsonl`` for replay.
+    """
+
+    path = profit_locks_path()
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except json.JSONDecodeError:
+        existing = {}
+    if isinstance(existing, list):
+        existing = {item.get("symbol", "").upper(): item for item in existing if isinstance(item, dict)}
+    if not isinstance(existing, dict):
+        existing = {}
+
+    key = symbol.upper()
+    now_iso = datetime.now(UTC).isoformat()
+    prior = existing.get(key) or {}
+    entry = {
+        "symbol": key,
+        "locked_at": prior.get("locked_at") or now_iso,
+        "last_seen_at": now_iso,
+        "block_reason": block_reason,
+        "current_price": current_price,
+        "average_entry_price": average_entry_price,
+        "market_value": market_value,
+        "unrealized_pl": unrealized_pl,
+    }
+    existing[key] = entry
+    path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+    _append_jsonl(
+        "autopilot-events.jsonl",
+        AuditEvent(event_type="profit_lock", payload=entry),
+    )
+    return entry
+
+
+def clear_profit_lock(symbol: str) -> None:
+    """Remove a single profit-lock entry by symbol (e.g., after a sell)."""
+
+    path = profit_locks_path()
+    if not path.exists():
+        return
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return
+    if not isinstance(existing, dict):
+        return
+    if existing.pop(symbol.upper(), None) is not None:
+        path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+
 def safety_state_path() -> Path:
     return runtime_dir() / "safety-state.json"
 

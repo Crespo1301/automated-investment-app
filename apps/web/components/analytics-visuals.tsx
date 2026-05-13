@@ -514,12 +514,6 @@ export function PerformanceSparkline({ points }: { points: PerformancePoint[] })
   return (
     <div className="chart-frame">
       <svg viewBox="0 0 100 48" preserveAspectRatio="none" role="img" aria-label="Portfolio equity curve">
-        <defs>
-          <linearGradient id="chart-area-gradient" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="rgba(34, 197, 94, 0.3)" />
-            <stop offset="100%" stopColor="rgba(34, 197, 94, 0)" />
-          </linearGradient>
-        </defs>
         {ticks.map((t, i) => (
           <line
             key={i}

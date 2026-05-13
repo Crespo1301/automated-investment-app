@@ -104,12 +104,6 @@ export function LivePerformancePanel() {
       <div className="chart-frame">
         {path.line ? (
           <svg viewBox="0 0 100 48" preserveAspectRatio="none" role="img" aria-label="Portfolio value trend">
-            <defs>
-              <linearGradient id="chart-area-gradient" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="rgba(34, 197, 94, 0.3)" />
-                <stop offset="100%" stopColor="rgba(34, 197, 94, 0)" />
-              </linearGradient>
-            </defs>
             <path className="chart-area" d={path.area} />
             <polyline className="chart-line" points={path.line} vectorEffect="non-scaling-stroke" />
           </svg>

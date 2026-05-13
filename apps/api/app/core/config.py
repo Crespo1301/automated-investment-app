@@ -132,9 +132,24 @@ class Settings(BaseSettings):
     pdt_capped_swing_position_size_multiplier: float = 0.5
     small_win_min_pdt_slots_to_exit: int = 2
     small_win_min_net_profit_dollars: float = 0.10
+    # At low NAV (<= low_portfolio_threshold) spread + fees swallow tiny
+    # same-day exits. Raise the bar so a PDT slot is only spent when the
+    # net profit estimate clears a more meaningful floor. Env override:
+    # ``INVESTMENT_APP_LOW_NAV_SMALL_WIN_MIN_NET_PROFIT_DOLLARS``.
+    low_nav_small_win_min_net_profit_dollars: float = 0.18
     low_portfolio_threshold: float = 50.0
     low_portfolio_small_win_percent: float = 2.5
     small_win_min_holding_minutes: int = 1440
+    # Hard cap on concurrent open positions while the account is under
+    # ``low_portfolio_threshold``. At small NAV, $1-3 lots fragment the
+    # portfolio so spread and PDT slot cost dominate signal edge. Block
+    # new entries (the risk gate rejects them) until exits free a slot.
+    # Env override: ``INVESTMENT_APP_LOW_NAV_MAX_OPEN_POSITIONS``.
+    low_nav_max_open_positions: int = 4
+    # Positions at or below this market value, held past the configured
+    # min holding window, are surfaced as morning-defragmentation
+    # candidates. Read-only; the operator decides whether to liquidate.
+    defragmentation_max_market_value_dollars: float = 3.0
     minimum_order_notional: float = 1.0
     allow_demo_live_entries: bool = False
     # When the rolling five-business-day day-trade count is at or above the

@@ -12,9 +12,11 @@ from app.domain.trading import (
     AutopilotState,
     BrokerAccountStatus,
     DailyTradeRecap,
+    DefragmentationReport,
     ExitCheckResult,
     PipelineRunResult,
     PerformanceHistory,
+    ProfitLockReport,
     ProtectionPlan,
     RiskLimits,
 )
@@ -31,7 +33,11 @@ from app.services.audit_store import (
     summarize_audit,
 )
 from app.services.autopilot import disable_autopilot, enable_autopilot, run_autopilot_once
-from app.services.exit_monitor import run_exit_check
+from app.services.exit_monitor import (
+    get_defragmentation_report,
+    get_profit_lock_report,
+    run_exit_check,
+)
 from app.services.demo_data import (
     get_dashboard_snapshot,
     get_handoff_catalog,
@@ -269,6 +275,28 @@ def risk_exit_check() -> ExitCheckResult:
     """Return current app-managed exit signals without submitting orders."""
 
     return run_exit_check(get_active_alpaca_broker(), execute=False)
+
+
+@router.get(
+    "/api/risk/profit-locks",
+    response_model=ProfitLockReport,
+    tags=["risk"],
+)
+def risk_profit_locks() -> ProfitLockReport:
+    """Return profit-locked carries — positions whose TP signal was PDT-blocked."""
+
+    return get_profit_lock_report(get_active_alpaca_broker())
+
+
+@router.get(
+    "/api/risk/defragmentation-candidates",
+    response_model=DefragmentationReport,
+    tags=["risk"],
+)
+def risk_defragmentation_candidates() -> DefragmentationReport:
+    """Return stale tiny lots safe to liquidate without consuming a PDT slot."""
+
+    return get_defragmentation_report(get_active_alpaca_broker())
 
 
 @router.get(

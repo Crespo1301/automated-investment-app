@@ -345,6 +345,42 @@ class ProtectionPlan(BaseModel):
     notes: list[str]
 
 
+class ProfitLockEntry(BaseModel):
+    """A position whose take-profit signal was held by the PDT cap."""
+
+    symbol: str
+    locked_at: datetime | None = None
+    block_reason: str
+    average_entry_price: float | None = None
+    current_price: float | None = None
+    market_value: float | None = None
+    unrealized_pl: float | None = None
+
+
+class ProfitLockReport(BaseModel):
+    """Operator-facing summary of profit-locked carries."""
+
+    entries: list[ProfitLockEntry]
+    notes: list[str]
+
+
+class DefragmentationCandidate(BaseModel):
+    """Stale tiny lot safe to liquidate without consuming a PDT slot."""
+
+    symbol: str
+    market_value: float
+    unrealized_pl: float
+    last_buy_filled_at: datetime
+    age_minutes: int
+
+
+class DefragmentationReport(BaseModel):
+    """Pre-open defragmentation worklist for buying-power reclaim."""
+
+    candidates: list[DefragmentationCandidate]
+    notes: list[str]
+
+
 class PerformancePoint(BaseModel):
     """Historical account value point for dashboard charts."""
 
