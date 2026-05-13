@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from app.core.config import settings
+from app.core.config import configured_high_vol_symbols, settings
 from app.domain.trading import (
     BrokerOrderSummary,
     BrokerPositionSummary,
@@ -31,7 +31,8 @@ def evaluate_exit_signals(
             continue
 
         average_entry_price = position.cost_basis / position.quantity
-        stop_price = average_entry_price * (1 - settings.autopilot_stop_loss_percent / 100)
+        stop_loss_percent = _stop_loss_percent(position.symbol)
+        stop_price = average_entry_price * (1 - stop_loss_percent / 100)
         small_win_percent = _small_win_percent(portfolio_value)
         small_win_price = average_entry_price * (1 + small_win_percent / 100)
         take_profit_price = average_entry_price * (1 + settings.autopilot_take_profit_percent / 100)
@@ -104,6 +105,7 @@ def run_exit_check(broker: object, *, execute: bool) -> ExitCheckResult:
     blocked_reasons: list[str] = []
 
     if execution_allowed:
+        positions_by_symbol = {position.symbol.upper(): position for position in snapshot.positions}
         for signal in signals:
             if not signal.execution_allowed:
                 blocked_reasons.append(
@@ -111,6 +113,20 @@ def run_exit_check(broker: object, *, execute: bool) -> ExitCheckResult:
                 )
                 continue
             day_trade_guard = _day_trade_guard(broker, signal.symbol)
+            position = positions_by_symbol.get(signal.symbol.upper())
+            if (
+                signal.reason == "small_win"
+                and day_trade_guard is not None
+                and day_trade_guard.would_be_day_trade
+                and position is not None
+                and not _small_win_can_spend_pdt_slot(position, day_trade_guard)
+            ):
+                blocked_reasons.append(
+                    f"{signal.symbol}: small-win exit held to preserve PDT slot; estimated net "
+                    f"${_estimated_net_profit(position):.2f}."
+                )
+                signal.execution_allowed = False
+                continue
             if day_trade_guard is not None and not day_trade_guard.allowed:
                 blocked_reasons.append(f"{signal.symbol}: {day_trade_guard.reason}")
                 signal.execution_allowed = False
@@ -129,6 +145,9 @@ def run_exit_check(broker: object, *, execute: bool) -> ExitCheckResult:
             f"Low-portfolio mode is active: small-win exits require {settings.low_portfolio_small_win_percent:.1f}% "
             f"and at least {settings.small_win_min_holding_minutes} holding minutes."
         )
+    notes.append(
+        "PDT allocator reserves scarce day-trade slots for stop-losses and high-value exits before small wins."
+    )
     if not market_is_open and not settings.allow_outside_market_hours:
         notes.append("Exit execution is locked because the regular market is closed.")
     if signals and not execution_allowed:
@@ -161,6 +180,34 @@ def _small_win_percent(portfolio_value: float | None) -> float:
         return max(settings.autopilot_small_win_percent, settings.low_portfolio_small_win_percent)
 
     return settings.autopilot_small_win_percent
+
+
+def _stop_loss_percent(symbol: str) -> float:
+    if symbol.upper() in configured_high_vol_symbols():
+        return settings.high_vol_stop_loss_percent
+
+    return settings.autopilot_stop_loss_percent
+
+
+def _estimated_net_profit(position: BrokerPositionSummary) -> float:
+    half_spread_rate = max(0.0, settings.max_entry_spread_bps) / 2 / 10_000
+    estimated_round_trip_spread = (position.market_value + position.cost_basis) * half_spread_rate
+    return position.unrealized_pl - estimated_round_trip_spread
+
+
+def _small_win_can_spend_pdt_slot(
+    position: BrokerPositionSummary,
+    day_trade_guard: object,
+) -> bool:
+    slots_remaining = max(
+        0,
+        day_trade_guard.max_day_trades_5_business_days
+        - day_trade_guard.day_trades_5_business_days,
+    )
+    if slots_remaining < settings.small_win_min_pdt_slots_to_exit:
+        return False
+
+    return _estimated_net_profit(position) >= settings.small_win_min_net_profit_dollars
 
 
 def _small_win_hold_satisfied(

@@ -34,6 +34,13 @@ DEFAULT_ALLOWED_SYMBOLS = (
     "CVNA,AFRM,UPST,DKNG,RIOT,MARA,MSTR,IONQ,APP,TTD"
 )
 
+DEFAULT_HIGH_VOL_SYMBOLS = (
+    "ARKK,ARKW,ARKG,XBI,KRE,COIN,HOOD,ROKU,NET,DDOG,CRWD,PANW,ZS,TWLO,"
+    "OKTA,MDB,U,DOCU,SOFI,ENPH,FSLR,RBLX,PINS,SNAP,RIVN,LCID,NIO,LI,XPEV,"
+    "AAL,UAL,DAL,BABA,JD,PDD,MELI,SE,NU,GME,SOUN,BBAI,CVNA,AFRM,UPST,"
+    "DKNG,RIOT,MARA,MSTR,IONQ,APP,TTD,PLTR,SMCI,ARM"
+)
+
 
 class Settings(BaseSettings):
     """Centralized runtime settings.
@@ -115,6 +122,12 @@ class Settings(BaseSettings):
     autopilot_stop_loss_percent: float = 2.5
     autopilot_small_win_percent: float = 1.5
     autopilot_take_profit_percent: float = 6.0
+    high_vol_stop_loss_percent: float = 7.0
+    high_vol_symbols: str = DEFAULT_HIGH_VOL_SYMBOLS
+    high_vol_position_size_multiplier: float = 0.5
+    high_vol_min_pdt_slots_for_entry: int = 2
+    small_win_min_pdt_slots_to_exit: int = 2
+    small_win_min_net_profit_dollars: float = 0.10
     low_portfolio_threshold: float = 50.0
     low_portfolio_small_win_percent: float = 2.5
     small_win_min_holding_minutes: int = 1440
@@ -186,6 +199,16 @@ def configured_swing_safe_strategies() -> set[str]:
         sid.strip()
         for sid in settings.swing_safe_strategy_ids.split(",")
         if sid.strip()
+    }
+
+
+def configured_high_vol_symbols() -> set[str]:
+    """Return symbols treated as high-volatility for PDT and exit posture."""
+
+    return {
+        symbol.strip().upper()
+        for symbol in settings.high_vol_symbols.split(",")
+        if symbol.strip()
     }
 
 

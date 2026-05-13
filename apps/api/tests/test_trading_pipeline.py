@@ -57,6 +57,12 @@ def isolate_runtime_settings(tmp_path):
         "autopilot_small_win_percent": settings.autopilot_small_win_percent,
         "autopilot_stop_loss_percent": settings.autopilot_stop_loss_percent,
         "autopilot_take_profit_percent": settings.autopilot_take_profit_percent,
+        "high_vol_stop_loss_percent": settings.high_vol_stop_loss_percent,
+        "high_vol_symbols": settings.high_vol_symbols,
+        "high_vol_position_size_multiplier": settings.high_vol_position_size_multiplier,
+        "high_vol_min_pdt_slots_for_entry": settings.high_vol_min_pdt_slots_for_entry,
+        "small_win_min_pdt_slots_to_exit": settings.small_win_min_pdt_slots_to_exit,
+        "small_win_min_net_profit_dollars": settings.small_win_min_net_profit_dollars,
         "low_portfolio_threshold": settings.low_portfolio_threshold,
         "low_portfolio_small_win_percent": settings.low_portfolio_small_win_percent,
         "small_win_min_holding_minutes": settings.small_win_min_holding_minutes,
@@ -104,6 +110,12 @@ def isolate_runtime_settings(tmp_path):
     settings.autopilot_small_win_percent = 1.5
     settings.autopilot_stop_loss_percent = 2
     settings.autopilot_take_profit_percent = 3
+    settings.high_vol_stop_loss_percent = 7
+    settings.high_vol_symbols = "IONQ,NIO,HOOD"
+    settings.high_vol_position_size_multiplier = 0.5
+    settings.high_vol_min_pdt_slots_for_entry = 2
+    settings.small_win_min_pdt_slots_to_exit = 2
+    settings.small_win_min_net_profit_dollars = 0.10
     settings.low_portfolio_threshold = 50
     settings.low_portfolio_small_win_percent = 2.5
     settings.small_win_min_holding_minutes = 1440
@@ -1935,6 +1947,30 @@ def test_exit_monitor_detects_stop_loss_signal() -> None:
     assert signals[0].execution_allowed is False
 
 
+def test_exit_monitor_uses_wider_stop_for_high_vol_symbols() -> None:
+    settings.autopilot_stop_loss_percent = 2
+    settings.high_vol_stop_loss_percent = 7
+    settings.high_vol_symbols = "IONQ"
+
+    signals = evaluate_exit_signals(
+        positions=[
+            BrokerPositionSummary(
+                symbol="IONQ",
+                quantity=0.1,
+                market_value=9.5,
+                cost_basis=10,
+                unrealized_pl=-0.5,
+                unrealized_pl_percent=-0.05,
+                current_price=95,
+            )
+        ],
+        orders=[],
+        execution_allowed=True,
+    )
+
+    assert signals == []
+
+
 def test_exit_monitor_skips_sub_dollar_position() -> None:
     signals = evaluate_exit_signals(
         positions=[
@@ -2182,6 +2218,76 @@ def test_exit_check_blocks_fourth_rolling_day_trade() -> None:
     assert any("PDT limit" in note for note in result.notes)
 
 
+def test_small_win_does_not_spend_reserved_pdt_slot() -> None:
+    from app.domain.trading import BrokerAccountStatus, BrokerReconciliationSnapshot, MarketClockStatus
+    from app.services.exit_monitor import run_exit_check
+
+    settings.autopilot_allow_exits = True
+    settings.autopilot_small_win_percent = 1
+    settings.autopilot_take_profit_percent = 6
+    settings.small_win_min_holding_minutes = 0
+    settings.small_win_min_pdt_slots_to_exit = 2
+    settings.small_win_min_net_profit_dollars = 0.01
+
+    class FakeBroker:
+        submitted = False
+
+        def get_market_clock(self):
+            return MarketClockStatus(is_open=True)
+
+        def get_day_trade_guard(self, symbol):
+            return DayTradeGuardResult(
+                symbol=symbol,
+                would_be_day_trade=True,
+                allowed=True,
+                day_trades_5_business_days=2,
+                local_day_trades_5_business_days=2,
+                broker_day_trades_5_business_days=2,
+                count_source="local",
+                max_day_trades_5_business_days=3,
+                records=[],
+                reason="Day trade allowed under rolling five-business-day limit.",
+            )
+
+        def get_reconciliation_snapshot(self, order_limit=50):
+            return BrokerReconciliationSnapshot(
+                account=BrokerAccountStatus(
+                    broker="test",
+                    account_mode="live",
+                    account_id_hint="local",
+                    status="active",
+                    currency="USD",
+                    buying_power=10,
+                    cash=10,
+                    portfolio_value=20,
+                ),
+                orders=[],
+                positions=[
+                    BrokerPositionSummary(
+                        symbol="SPY",
+                        quantity=1,
+                        market_value=103,
+                        cost_basis=100,
+                        unrealized_pl=3,
+                        unrealized_pl_percent=0.03,
+                        current_price=103,
+                    )
+                ],
+            )
+
+        def submit_position_market_sell(self, symbol):
+            self.submitted = True
+            raise AssertionError("small-win should preserve the final PDT slot")
+
+    broker = FakeBroker()
+    result = run_exit_check(broker, execute=True)
+
+    assert broker.submitted is False
+    assert result.signals[0].reason == "small_win"
+    assert result.signals[0].execution_allowed is False
+    assert any("preserve PDT slot" in note for note in result.notes)
+
+
 def test_protection_plan_marks_open_position_without_sell_order_unprotected() -> None:
     plan = build_protection_plan(
         positions=[
@@ -2277,22 +2383,33 @@ def test_broker_oco_protection_blocks_fractional_positions() -> None:
 def test_pdt_traps_new_entry_blocks_when_count_at_cap(monkeypatch) -> None:
     monkeypatch.setattr(settings, "block_entries_when_pdt_maxed", True)
     monkeypatch.setattr(settings, "swing_safe_strategy_ids", "")
-    assert _pdt_traps_new_entry(3, 3, "micro_breakout_v1") is True
+    monkeypatch.setattr(settings, "high_vol_symbols", "")
+    assert _pdt_traps_new_entry(3, 3, "micro_breakout_v1", "SPY") is True
 
 
 def test_pdt_traps_new_entry_allows_swing_safe_strategy(monkeypatch) -> None:
     monkeypatch.setattr(settings, "block_entries_when_pdt_maxed", True)
     monkeypatch.setattr(settings, "swing_safe_strategy_ids", "overnight_drift_v1")
-    assert _pdt_traps_new_entry(3, 3, "overnight_drift_v1") is False
+    monkeypatch.setattr(settings, "high_vol_symbols", "")
+    assert _pdt_traps_new_entry(3, 3, "overnight_drift_v1", "SPY") is False
 
 
 def test_pdt_traps_new_entry_allows_under_cap(monkeypatch) -> None:
     monkeypatch.setattr(settings, "block_entries_when_pdt_maxed", True)
     monkeypatch.setattr(settings, "swing_safe_strategy_ids", "")
-    assert _pdt_traps_new_entry(2, 3, "micro_breakout_v1") is False
+    monkeypatch.setattr(settings, "high_vol_symbols", "")
+    assert _pdt_traps_new_entry(2, 3, "micro_breakout_v1", "SPY") is False
 
 
 def test_pdt_traps_new_entry_respects_disable_flag(monkeypatch) -> None:
     monkeypatch.setattr(settings, "block_entries_when_pdt_maxed", False)
     monkeypatch.setattr(settings, "swing_safe_strategy_ids", "")
-    assert _pdt_traps_new_entry(3, 3, "micro_breakout_v1") is False
+    monkeypatch.setattr(settings, "high_vol_symbols", "")
+    assert _pdt_traps_new_entry(3, 3, "micro_breakout_v1", "SPY") is False
+
+
+def test_pdt_traps_new_entry_blocks_high_vol_when_slots_are_low(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "block_entries_when_pdt_maxed", False)
+    monkeypatch.setattr(settings, "high_vol_symbols", "IONQ")
+    monkeypatch.setattr(settings, "high_vol_min_pdt_slots_for_entry", 2)
+    assert _pdt_traps_new_entry(2, 3, "high_upside_momentum_v1", "IONQ") is True

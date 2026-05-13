@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 from app.core.config import (
+    configured_high_vol_symbols,
     configured_swing_safe_strategies,
     configured_symbols,
     settings,
@@ -151,6 +152,7 @@ def run_single_cycle(
             broker_receipt=None,
         )
 
+    candidate = _apply_symbol_volatility_sizing(candidate)
     event = selected_event
     scored_candidate = TradeScorer().score(candidate)
 
@@ -174,6 +176,7 @@ def run_single_cycle(
         portfolio_state.day_trades_5_business_days,
         limits.max_day_trades_5_business_days,
         candidate.strategy_id,
+        candidate.symbol,
     ):
         risk_decision = RiskDecision(
             state="rejected",
@@ -183,7 +186,7 @@ def run_single_cycle(
                 " stop-loss could not be honored.",
                 f"day_trades_5_business_days={portfolio_state.day_trades_5_business_days}"
                 f"/{limits.max_day_trades_5_business_days};"
-                f" strategy={candidate.strategy_id} is not in swing_safe_strategy_ids.",
+                f" strategy={candidate.strategy_id} and symbol={candidate.symbol} do not pass PDT slot allocation.",
             ],
         )
         execution_intent = None
@@ -398,14 +401,50 @@ def _pdt_traps_new_entry(
     day_trade_count: int,
     max_day_trades: int,
     strategy_id: str,
+    symbol: str,
 ) -> bool:
-    if not settings.block_entries_when_pdt_maxed:
-        return False
     if max_day_trades <= 0:
         return False
-    if day_trade_count < max_day_trades:
+    slots_remaining = max(0, max_day_trades - day_trade_count)
+    normalized_symbol = symbol.upper()
+
+    if (
+        normalized_symbol in configured_high_vol_symbols()
+        and slots_remaining < settings.high_vol_min_pdt_slots_for_entry
+    ):
+        return True
+
+    if not settings.block_entries_when_pdt_maxed:
+        return False
+    if slots_remaining > 0:
         return False
     return strategy_id not in configured_swing_safe_strategies()
+
+
+def _apply_symbol_volatility_sizing(candidate: TradeCandidate) -> TradeCandidate:
+    if candidate.symbol.upper() not in configured_high_vol_symbols():
+        return candidate
+
+    multiplier = max(0.0, min(1.0, settings.high_vol_position_size_multiplier))
+    adjusted_notional = candidate.proposed_notional * multiplier
+    if candidate.proposed_notional >= settings.minimum_order_notional:
+        adjusted_notional = max(settings.minimum_order_notional, adjusted_notional)
+
+    if adjusted_notional >= candidate.proposed_notional:
+        return candidate
+
+    return candidate.model_copy(
+        update={
+            "proposed_notional": round(adjusted_notional, 2),
+            "trigger_evidence": [
+                *candidate.trigger_evidence,
+                (
+                    f"{candidate.symbol} is high-volatility tier; proposed notional reduced "
+                    f"by {multiplier:.0%}."
+                ),
+            ],
+        }
+    )
 
 
 def _broker_day_trade_count(broker: AlpacaBroker | None) -> int:
