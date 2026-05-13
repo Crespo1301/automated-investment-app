@@ -2,7 +2,11 @@
 
 from datetime import UTC, datetime, timedelta
 
-from app.core.config import configured_symbols, settings
+from app.core.config import (
+    configured_swing_safe_strategies,
+    configured_symbols,
+    settings,
+)
 from app.domain.trading import (
     MarketEvent,
     PipelineRunResult,
@@ -162,6 +166,24 @@ def run_single_cycle(
             candidate_id=candidate.candidate_id,
             reasons=[
                 "Queue-for-open requires live trading mode and explicit live permission.",
+            ],
+        )
+        execution_intent = None
+
+    if execution_intent is not None and _pdt_traps_new_entry(
+        portfolio_state.day_trades_5_business_days,
+        limits.max_day_trades_5_business_days,
+        candidate.strategy_id,
+    ):
+        risk_decision = RiskDecision(
+            state="rejected",
+            candidate_id=candidate.candidate_id,
+            reasons=[
+                "PDT count is at the rolling five-business-day cap; a same-day"
+                " stop-loss could not be honored.",
+                f"day_trades_5_business_days={portfolio_state.day_trades_5_business_days}"
+                f"/{limits.max_day_trades_5_business_days};"
+                f" strategy={candidate.strategy_id} is not in swing_safe_strategy_ids.",
             ],
         )
         execution_intent = None
@@ -370,6 +392,20 @@ def _blocked_entry_symbols(broker: AlpacaBroker | None) -> set[str]:
             blocked.add(order.symbol.upper())
 
     return blocked
+
+
+def _pdt_traps_new_entry(
+    day_trade_count: int,
+    max_day_trades: int,
+    strategy_id: str,
+) -> bool:
+    if not settings.block_entries_when_pdt_maxed:
+        return False
+    if max_day_trades <= 0:
+        return False
+    if day_trade_count < max_day_trades:
+        return False
+    return strategy_id not in configured_swing_safe_strategies()
 
 
 def _broker_day_trade_count(broker: AlpacaBroker | None) -> int:

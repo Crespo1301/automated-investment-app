@@ -471,8 +471,9 @@ export function PdtMeter({ daytradeCount }: { daytradeCount?: number | null }) {
         </div>
       </div>
       <p className="thesis" style={{ marginTop: 10 }}>
-        {stateLabel}. Buys are unaffected; same-day sells use Alpaca&apos;s rolling daytrade_count to stay
-        under three day-trades in five business days.
+        {stateLabel}. At the cap, new intraday entries are blocked too — a stop-loss on a fresh
+        buy would otherwise be locked out the same session. Strategies tagged as swing-safe in
+        settings remain eligible.
       </p>
     </div>
   );

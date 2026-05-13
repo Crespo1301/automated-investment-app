@@ -84,7 +84,7 @@ function OrderTable({
 }) {
   return (
     <div className="order-table">
-      <div className="order-row table-head">
+      <div className="order-row has-pnl table-head">
         <span>Symbol</span>
         <span>Side</span>
         <span>Status</span>
@@ -96,7 +96,7 @@ function OrderTable({
         orders.map((order) => {
           const pnl = estimatedPnl.get(order.broker_order_id);
           return (
-            <div className="order-row" key={order.broker_order_id}>
+            <div className="order-row has-pnl" key={order.broker_order_id}>
               <strong className="symbol">{order.symbol}</strong>
               <span>{cleanEnum(order.side)}</span>
               <span>{cleanEnum(order.status)}</span>

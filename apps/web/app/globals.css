@@ -879,13 +879,17 @@ button {
 
 .order-row {
   display: grid;
-  grid-template-columns: 1fr 90px 130px 130px 110px 110px;
+  grid-template-columns: 1fr 90px 130px 130px 110px;
   gap: 12px;
   align-items: center;
   padding: 11px 12px;
   border-top: 1px solid var(--line);
   background: var(--panel-2);
   font-size: 0.88rem;
+}
+
+.order-row.has-pnl {
+  grid-template-columns: 1fr 90px 130px 130px 110px 110px;
 }
 
 .order-row:first-child,
@@ -1333,6 +1337,7 @@ button {
 
   .table-row,
   .order-row,
+  .order-row.has-pnl,
   .bar-row {
     grid-template-columns: 1fr;
   }

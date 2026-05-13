@@ -27,6 +27,7 @@ from app.services.broker_adapter import (
     missing_alpaca_credential_names,
 )
 from app.services.local_worker import (
+    _pdt_traps_new_entry,
     get_risk_limits,
     run_queue_for_open_cycle,
     run_single_cycle,
@@ -81,6 +82,8 @@ def isolate_runtime_settings(tmp_path):
         "max_entry_spread_bps": settings.max_entry_spread_bps,
         "max_symbols_per_cycle": settings.max_symbols_per_cycle,
         "allow_demo_live_entries": settings.allow_demo_live_entries,
+        "block_entries_when_pdt_maxed": settings.block_entries_when_pdt_maxed,
+        "swing_safe_strategy_ids": settings.swing_safe_strategy_ids,
         "alpaca_paper": settings.alpaca_paper,
         "duplicate_order_lookback_minutes": settings.duplicate_order_lookback_minutes,
         "openai_api_key": settings.openai_api_key,
@@ -126,6 +129,8 @@ def isolate_runtime_settings(tmp_path):
     settings.max_entry_spread_bps = 75
     settings.max_symbols_per_cycle = 80
     settings.allow_demo_live_entries = False
+    settings.block_entries_when_pdt_maxed = True
+    settings.swing_safe_strategy_ids = ""
     settings.alpaca_paper = True
     settings.duplicate_order_lookback_minutes = 390
     settings.openai_api_key = None
@@ -2267,3 +2272,27 @@ def test_broker_oco_protection_blocks_fractional_positions() -> None:
 
     with pytest.raises(ValueError, match="fractional quantity"):
         broker.submit_position_oco_protection("NVDA")
+
+
+def test_pdt_traps_new_entry_blocks_when_count_at_cap(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "block_entries_when_pdt_maxed", True)
+    monkeypatch.setattr(settings, "swing_safe_strategy_ids", "")
+    assert _pdt_traps_new_entry(3, 3, "micro_breakout_v1") is True
+
+
+def test_pdt_traps_new_entry_allows_swing_safe_strategy(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "block_entries_when_pdt_maxed", True)
+    monkeypatch.setattr(settings, "swing_safe_strategy_ids", "overnight_drift_v1")
+    assert _pdt_traps_new_entry(3, 3, "overnight_drift_v1") is False
+
+
+def test_pdt_traps_new_entry_allows_under_cap(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "block_entries_when_pdt_maxed", True)
+    monkeypatch.setattr(settings, "swing_safe_strategy_ids", "")
+    assert _pdt_traps_new_entry(2, 3, "micro_breakout_v1") is False
+
+
+def test_pdt_traps_new_entry_respects_disable_flag(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "block_entries_when_pdt_maxed", False)
+    monkeypatch.setattr(settings, "swing_safe_strategy_ids", "")
+    assert _pdt_traps_new_entry(3, 3, "micro_breakout_v1") is False

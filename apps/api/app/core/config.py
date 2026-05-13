@@ -120,6 +120,14 @@ class Settings(BaseSettings):
     small_win_min_holding_minutes: int = 1440
     minimum_order_notional: float = 1.0
     allow_demo_live_entries: bool = False
+    # When the rolling five-business-day day-trade count is at or above the
+    # PDT limit, any new same-day intraday entry is "trapped": if its stop
+    # fires before midnight ET it cannot be sold without breaching PDT. The
+    # May 12 live test logged this exact failure mode (313 IONQ stop-loss
+    # exits blocked). Block new entries unless the strategy is explicitly
+    # tagged as overnight/swing-safe via ``swing_safe_strategy_ids``.
+    block_entries_when_pdt_maxed: bool = True
+    swing_safe_strategy_ids: str = ""
     # Options Level 1 foundation. ``options_enabled`` defaults to False so
     # the equity loop is not silently affected; flip via env once the
     # broker adapter and dashboard surface are wired. ``options_max_level``
@@ -164,6 +172,21 @@ def configured_symbols() -> list[str]:
         for symbol in settings.allowed_symbols.split(",")
         if symbol.strip()
     ]
+
+
+def configured_swing_safe_strategies() -> set[str]:
+    """Strategy IDs whose entries are allowed when PDT is at the cap.
+
+    Empty by default: until a strategy is explicitly tagged as overnight or
+    swing-safe, we treat every candidate as same-day risk and block new
+    entries once the rolling PDT count reaches the limit.
+    """
+
+    return {
+        sid.strip()
+        for sid in settings.swing_safe_strategy_ids.split(",")
+        if sid.strip()
+    }
 
 
 def configured_options_underlyings() -> list[str]:
