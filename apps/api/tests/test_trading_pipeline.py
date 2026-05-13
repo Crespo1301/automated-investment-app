@@ -8,8 +8,11 @@ from app.core.config import settings
 from app.domain.trading import (
     AIScore,
     AutopilotState,
+    ExitCheckResult,
+    ExitSignal,
     DayTradeGuardResult,
     MarketEvent,
+    PipelineRunResult,
     PortfolioState,
     RiskLimits,
     ScoredTradeCandidate,
@@ -1486,6 +1489,63 @@ def test_autopilot_reports_exits_checked_before_below_minimum_entry_skip(monkeyp
 
     monkeypatch.setattr("app.services.autopilot.get_active_alpaca_broker", lambda: FakeBroker())
     monkeypatch.setattr("app.services.local_worker.get_active_alpaca_broker", lambda: FakeBroker())
+
+    state = run_autopilot_once()
+
+    assert state.last_action == "exit_checked_entry_skipped:buying_power_below_$1.00_minimum"
+
+
+def test_autopilot_does_not_stall_on_locked_small_win(monkeypatch) -> None:
+    settings.trading_mode = "live"
+    settings.allow_live_trading = True
+    settings.autopilot_allow_entries = True
+    enable_autopilot("test arm")
+
+    class FakeClock:
+        is_open = True
+        next_open = None
+
+    class FakeBroker:
+        def get_market_clock(self):
+            return FakeClock()
+
+    monkeypatch.setattr("app.services.autopilot.get_active_alpaca_broker", lambda: FakeBroker())
+    monkeypatch.setattr(
+        "app.services.autopilot.run_exit_check",
+        lambda broker, execute: ExitCheckResult(
+            signals=[
+                ExitSignal(
+                    symbol="F",
+                    reason="small_win",
+                    current_price=12.61,
+                    average_entry_price=12.25,
+                    trigger_price=12.55,
+                    quantity=0.2,
+                    market_value=2.5,
+                    execution_allowed=False,
+                )
+            ],
+            submitted_receipts=[],
+            notes=[],
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.autopilot.run_single_cycle",
+        lambda: PipelineRunResult(
+            event=MarketEvent(
+                source="portfolio-guard",
+                symbol="CASH",
+                event_kind="bar",
+                price=0,
+                volume=0,
+            ),
+            candidate=None,
+            scored_candidate=None,
+            risk_decision=None,
+            execution_intent=None,
+            broker_receipt=None,
+        ),
+    )
 
     state = run_autopilot_once()
 

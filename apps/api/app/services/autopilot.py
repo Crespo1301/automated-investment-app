@@ -62,8 +62,12 @@ def run_autopilot_once() -> AutopilotState:
         symbols = ",".join(receipt.symbol for receipt in exit_result.submitted_receipts)
         return record_autopilot_heartbeat(f"exit_submitted:{symbols}")
     if exit_result.signals:
-        symbols = ",".join(f"{signal.symbol}:{signal.reason}" for signal in exit_result.signals)
-        return record_autopilot_heartbeat(f"exit_signal_locked:{symbols}")
+        blocking_signals = [
+            signal for signal in exit_result.signals if signal.reason != "small_win"
+        ]
+        if blocking_signals:
+            symbols = ",".join(f"{signal.symbol}:{signal.reason}" for signal in blocking_signals)
+            return record_autopilot_heartbeat(f"exit_signal_locked:{symbols}")
 
     if settings.options_enabled:
         try:
