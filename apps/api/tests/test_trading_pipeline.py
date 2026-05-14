@@ -1126,29 +1126,6 @@ def test_risk_gate_respects_local_min_env_override(monkeypatch) -> None:
     assert decision.state == "approved", decision.reasons
 
 
-def test_risk_gate_rejects_low_nav_fragmentation(monkeypatch) -> None:
-    """At tiny account size, more names are not diversification, they are
-    friction. The risk gate should reject entries once the low-NAV position
-    cap is reached even if the global open-position cap is higher."""
-
-    monkeypatch.setattr(settings, "low_portfolio_threshold", 50.0)
-    monkeypatch.setattr(settings, "low_nav_max_open_positions", 4)
-
-    scored = _make_scored_candidate(score=0.70, provenance="anthropic")
-    portfolio_state = _make_portfolio_state().model_copy(
-        update={
-            "open_positions": 4,
-            "portfolio_value": 20.93,
-            "buying_power": 10,
-        }
-    )
-    decision, intent = RiskEngine(_make_risk_limits()).evaluate(scored, portfolio_state)
-
-    assert decision.state == "rejected"
-    assert intent is None
-    assert any("Low-NAV fragmentation guard" in reason for reason in decision.reasons)
-
-
 def test_local_heuristic_provenance_is_local() -> None:
     candidate = TradeCandidate(
         correlation_id="evt_test",

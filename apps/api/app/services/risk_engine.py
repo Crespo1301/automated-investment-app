@@ -33,22 +33,6 @@ class RiskEngine:
         if portfolio_state.open_positions >= self.limits.max_open_positions:
             reasons.append("Open position limit has already been reached.")
 
-        # Low-NAV fragmentation guard. At small portfolio sizes, holding
-        # many sub-$3 lots makes spread and PDT slot cost dominate edge.
-        # Cap concurrent names until exits free a slot. Env override:
-        # ``INVESTMENT_APP_LOW_NAV_MAX_OPEN_POSITIONS``.
-        low_nav_cap = max(1, int(getattr(settings, "low_nav_max_open_positions", 4)))
-        low_nav_threshold = float(getattr(settings, "low_portfolio_threshold", 0.0))
-        if (
-            portfolio_state.portfolio_value <= low_nav_threshold
-            and portfolio_state.open_positions >= low_nav_cap
-        ):
-            reasons.append(
-                f"Low-NAV fragmentation guard: {portfolio_state.open_positions} open positions "
-                f"at portfolio_value ${portfolio_state.portfolio_value:.2f} meets the "
-                f"{low_nav_cap}-position cap (active when NAV ≤ ${low_nav_threshold:.0f})."
-            )
-
         if portfolio_state.realized_pnl_today <= -self.limits.max_daily_loss:
             reasons.append("Daily loss limit has already been reached.")
 
