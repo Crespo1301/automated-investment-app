@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased - 2026-05-19 EOD
+
+Claude end-of-day pass. No code changed today; documentation only.
+Full session-level review in `docs/eod-2026-05-19.md`.
+
+### Notes
+
+- First full session with autonomous entries enabled since the
+  05-18 stale-config finding was resolved. Autopilot ran 261
+  pipeline cycles and submitted 6 live orders (5 ORB, 1 VWAP
+  reclaim). Account NAV $49.92 → $50.01 (+$0.09, +0.18%). Net
+  unrealized across the 8-name book closed essentially flat
+  (−$0.01). PDT 1/3 used.
+- Provider usage was 100% local fallback for the second straight
+  day. The deterministic scorer produced a flat-to-up day on its
+  own; no near-term need to top up paid AI quota.
+- EOD posture: kill switch ON (operator-paused from dashboard),
+  autopilot still armed with entries and exits enabled. The loop
+  will resume tomorrow only after the kill switch is cleared.
+
+### Docs
+
+- Archived stale dated session docs into `docs/archive/`:
+  `eod-2026-05-18.md`, `handoff-2026-05-18.md`,
+  `premarket-2026-05-19.md`.
+- Added `docs/eod-2026-05-19.md` with the session review,
+  next-day decisions, and archive notes.
+
 ## Unreleased - 2026-05-19 Claude pre-market patch
 
 Claude pre-market pass. The autopilot loop was found dead this morning:
