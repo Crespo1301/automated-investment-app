@@ -33,6 +33,17 @@ backend tests + web build, then push.
   is `true`. The note now reports the real cause — the `ALLOW_EXITS`
   message only when the flag is genuinely false, otherwise a "read-only
   preview" note. Display copy only; no exit logic changed.
+- The dashboard audit/performance endpoints no longer full-scan the
+  large append-only runtime logs on every request. `audit_store.py` now
+  uses bounded JSONL tail readers and line counters for recent history,
+  daily recap, and safety/audit summaries, cutting local endpoint
+  checks from multi-second/full-log scans down to sub-second reads for
+  the performance endpoints and low-single-digit seconds for the safety
+  snapshot.
+- The web lint command is now repo-owned and non-interactive. The
+  project has a committed ESLint flat config and `apps/web` now runs
+  `eslint .` instead of dropping into the deprecated `next lint` first-
+  run wizard.
 
 ### Safety Notes
 
@@ -48,11 +59,13 @@ backend tests + web build, then push.
 ### Codex Handoff
 
 - Files touched: `apps/api/app/services/autopilot.py`,
-  `apps/api/app/services/exit_monitor.py`, `CHANGELOG.md`,
-  `docs/premarket-2026-05-19.md`.
-- Validation: `pytest -q` → 120 passed locally. Loop-resilience tests
-  are not yet written — see `docs/premarket-2026-05-19.md` for the
-  recommended cases.
+  `apps/api/app/services/exit_monitor.py`, `apps/api/app/services/audit_store.py`,
+  `apps/api/tests/test_audit_store_and_autopilot.py`,
+  `apps/web/eslint.config.mjs`, `apps/web/package.json`,
+  `apps/web/components/analytics-visuals.tsx`, `package-lock.json`,
+  `CHANGELOG.md`, `docs/premarket-2026-05-19.md`.
+- Validation: `pytest -q` → 123 passed locally, `npm run build:web` →
+  passed, `npm run lint:web` → passed.
 - The live loop (relaunched 09:42 ET) already runs the resilience fix;
   the API server predates both edits. A normal build/restart picks them
   up — see the briefing doc.

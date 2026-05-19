@@ -175,11 +175,19 @@ job is to compound it safely.
   fix. The API (pid 517800, started 08:37 ET) predates both edits. A
   normal build/restart picks them up; no urgent mid-session restart is
   needed for trading correctness.
-- **Tests not written:** loop-resilience tests. Recommend adding —
-  transient error within budget keeps the loop armed and ticking;
-  transient error past budget trips the fail-safe; a non-network
-  exception trips it immediately. `run_autopilot_loop` accepts
-  `max_ticks` for exactly this.
+- **Follow-through completed after this handoff:** loop classifier tests
+  and audit-log tailing regression tests were added. The hot dashboard
+  endpoints now use bounded JSONL tail readers instead of reparsing the
+  full runtime logs on every request.
+- **Measured API latency after the audit-store follow-up:** direct local
+  checks on the rebuilt API returned
+  `/api/performance/history` ≈ `0.15s`,
+  `/api/performance/symbol-history` ≈ `0.15s`,
+  `/api/performance/daily-recap` ≈ `0.62s`, and
+  `/api/safety/status` ≈ `2.15s`.
+- **Web validation follow-through:** production build is green and
+  `lint:web` now runs non-interactively from a committed ESLint flat
+  config instead of dropping into the old `next lint` setup wizard.
 - Still-open prior items from `docs/handoff-2026-05-18.md` remain:
   stale `low_nav_max_open_positions` CHANGELOG line, dead
   `INVESTMENT_APP_MAX_LIVE_TRADES_PER_DAY` env var, `exit_signal_locked`

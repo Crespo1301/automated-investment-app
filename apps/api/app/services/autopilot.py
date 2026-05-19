@@ -134,7 +134,11 @@ _TRANSIENT_ERROR_RETRY_BUDGET = 6
 _TRANSIENT_NETWORK_ERRORS: tuple[type[BaseException], ...] = (
     requests.exceptions.ConnectionError,
     requests.exceptions.Timeout,
-    urllib3.exceptions.HTTPError,
+    urllib3.exceptions.ProtocolError,
+    urllib3.exceptions.ConnectTimeoutError,
+    urllib3.exceptions.ReadTimeoutError,
+    urllib3.exceptions.NameResolutionError,
+    urllib3.exceptions.NewConnectionError,
     ConnectionError,
     TimeoutError,
     socket.gaierror,

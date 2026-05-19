@@ -62,6 +62,105 @@ def _read_jsonl(name: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _iter_jsonl_reverse(name: str):
+    """Yield JSONL rows from newest to oldest without reading the whole file.
+
+    The runtime logs are append-only and can grow into tens of megabytes.
+    Reverse iteration lets dashboard endpoints look at just the recent tail or
+    just today's rows instead of reparsing the full historical file.
+    """
+
+    path = _jsonl_path(name)
+    if not path.exists():
+        return
+
+    chunk_size = 65536
+    with path.open("rb") as handle:
+        handle.seek(0, 2)
+        position = handle.tell()
+        buffer = b""
+
+        while position > 0:
+            read_size = min(chunk_size, position)
+            position -= read_size
+            handle.seek(position)
+            chunk = handle.read(read_size)
+            buffer = chunk + buffer
+            lines = buffer.split(b"\n")
+            buffer = lines[0]
+
+            for line in reversed(lines[1:]):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                yield json.loads(stripped)
+
+        stripped = buffer.strip()
+        if stripped:
+            yield json.loads(stripped)
+
+
+def _tail_jsonl(name: str, limit: int) -> list[dict[str, Any]]:
+    """Return the last ``limit`` parsed rows of a JSONL file.
+
+    Reads backward from the end of the file in chunks so the cost is
+    proportional to ``limit`` rather than to total file size. For the
+    append-only logs written here this is equivalent to
+    ``_read_jsonl(name)[-limit:]`` but never parses the discarded prefix —
+    the runtime logs grow into the tens of megabytes, so the whole-file
+    parse was making the dashboard endpoints take 10-40s each.
+    """
+
+    path = _jsonl_path(name)
+    if limit <= 0 or not path.exists():
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for row in _iter_jsonl_reverse(name):
+        rows.append(row)
+        if len(rows) >= limit:
+            break
+    rows.reverse()
+    return rows
+
+
+def _tail_jsonl_for_date(name: str, target_date: str) -> list[dict[str, Any]]:
+    """Return rows for one UTC date by scanning backward to the date boundary."""
+
+    rows: list[dict[str, Any]] = []
+    for row in _iter_jsonl_reverse(name):
+        created_at = str(row.get("created_at") or "")
+        row_date = created_at[:10]
+        if row_date == target_date:
+            rows.append(row)
+        elif rows:
+            break
+
+    rows.reverse()
+    return rows
+
+
+def _count_jsonl_lines(name: str) -> int:
+    """Count records in a JSONL file without parsing it.
+
+    ``_append_jsonl`` writes exactly one newline-terminated line per record,
+    so the newline count equals ``len(_read_jsonl(name))``.
+    """
+
+    path = _jsonl_path(name)
+    if not path.exists():
+        return 0
+
+    count = 0
+    with path.open("rb") as handle:
+        while True:
+            block = handle.read(1 << 20)
+            if not block:
+                break
+            count += block.count(b"\n")
+    return count
+
+
 def record_pipeline_run(result: PipelineRunResult) -> None:
     """Persist a complete pipeline run for later inspection."""
 
@@ -294,24 +393,29 @@ def record_autopilot_heartbeat(
 def summarize_audit(market_clock: MarketClockStatus | None = None) -> AuditSummary:
     """Return a compact audit summary for CLI and dashboard use."""
 
-    pipeline_runs = _read_jsonl("pipeline-runs.jsonl")
-    portfolio_snapshots = _read_jsonl("portfolio-snapshots.jsonl")
-    order_events = _read_jsonl("order-events.jsonl")
-    autopilot_events = _read_jsonl("autopilot-events.jsonl")
+    pipeline_run_count = _count_jsonl_lines("pipeline-runs.jsonl")
+    portfolio_snapshot_count = _count_jsonl_lines("portfolio-snapshots.jsonl")
+    order_event_count = _count_jsonl_lines("order-events.jsonl")
+    recent_order_events = _tail_jsonl("order-events.jsonl", 50)
+    recent_events = (
+        _tail_jsonl("pipeline-runs.jsonl", 1)
+        + _tail_jsonl("portfolio-snapshots.jsonl", 1)
+        + _tail_jsonl("order-events.jsonl", 1)
+        + _tail_jsonl("autopilot-events.jsonl", 1)
+    )
     last_event_at = None
     latest_order_status = None
     latest_order_symbol = None
     latest_order_notional = None
 
-    all_events = pipeline_runs + portfolio_snapshots + order_events + autopilot_events
-    if all_events:
+    if recent_events:
         last_event_at = max(
             datetime.fromisoformat(str(event["created_at"]))
-            for event in all_events
+            for event in recent_events
             if event.get("created_at")
         )
 
-    for event in reversed(order_events):
+    for event in reversed(recent_order_events):
         payload = event.get("payload") or {}
         latest_order_status = payload.get("status")
         latest_order_symbol = payload.get("symbol")
@@ -324,9 +428,9 @@ def summarize_audit(market_clock: MarketClockStatus | None = None) -> AuditSumma
         "Use broker reconciliation as the source of truth before each live cycle.",
     ]
     return AuditSummary(
-        pipeline_runs=len(pipeline_runs),
-        reconciliation_snapshots=len(portfolio_snapshots),
-        order_events=len(order_events),
+        pipeline_runs=pipeline_run_count,
+        reconciliation_snapshots=portfolio_snapshot_count,
+        order_events=order_event_count,
         last_event_at=last_event_at,
         latest_order_status=latest_order_status,
         latest_order_symbol=latest_order_symbol,
@@ -341,7 +445,7 @@ def summarize_audit(market_clock: MarketClockStatus | None = None) -> AuditSumma
 def get_performance_history(limit: int = 80) -> PerformanceHistory:
     """Build recent performance chart points from local reconciliation snapshots."""
 
-    snapshots = _read_jsonl("portfolio-snapshots.jsonl")[-limit:]
+    snapshots = _tail_jsonl("portfolio-snapshots.jsonl", limit)
     points: list[PerformancePoint] = []
     open_statuses = {
         "accepted",
@@ -393,7 +497,7 @@ def get_symbol_performance_history(limit: int = 80) -> SymbolPerformanceHistory:
     reconstructs one time series per held symbol without any new recording.
     """
 
-    snapshots = _read_jsonl("portfolio-snapshots.jsonl")[-limit:]
+    snapshots = _tail_jsonl("portfolio-snapshots.jsonl", limit)
     series_map: dict[str, list[SymbolPerformancePoint]] = {}
 
     for event in snapshots:
@@ -435,21 +539,9 @@ def get_daily_trade_recap(date: str | None = None) -> DailyTradeRecap:
     """Summarize today's compounding inputs from local audit events."""
 
     target_date = date or datetime.now(UTC).date().isoformat()
-    pipeline_runs = [
-        event
-        for event in _read_jsonl("pipeline-runs.jsonl")
-        if str(event.get("created_at", "")).startswith(target_date)
-    ]
-    portfolio_snapshots = [
-        event
-        for event in _read_jsonl("portfolio-snapshots.jsonl")
-        if str(event.get("created_at", "")).startswith(target_date)
-    ]
-    order_events = [
-        event
-        for event in _read_jsonl("order-events.jsonl")
-        if str(event.get("created_at", "")).startswith(target_date)
-    ]
+    pipeline_runs = _tail_jsonl_for_date("pipeline-runs.jsonl", target_date)
+    portfolio_snapshots = _tail_jsonl_for_date("portfolio-snapshots.jsonl", target_date)
+    order_events = _tail_jsonl_for_date("order-events.jsonl", target_date)
     provider_counts: dict[str, int] = {}
     strategy_counts: dict[str, dict[str, int]] = {}
     candidate_count = 0

@@ -698,8 +698,6 @@ export function SessionScorecard({ recap }: { recap: DailyTradeRecap | null }) {
     : 0;
   const actionableApprovalRate =
     recap && actionableCandidates > 0 ? recap.approved_count / actionableCandidates : 0;
-  const submissionRate = recap && recap.candidate_count > 0 ? recap.submitted_orders / recap.candidate_count : 0;
-
   return (
     <div className="recap-metrics">
       <div>
