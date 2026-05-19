@@ -2,15 +2,23 @@
   "mcpServers": {
     "code-review-graph": {
       "command": "/home/cresp3/.local/bin/code-review-graph",
-      "args": ["serve", "--repo", "/home/cresp3/automated-investment-app"]
+      "args": [
+        "serve",
+        "--repo",
+        "/home/cresp3/automated-investment-app"
+      ]
     },
     "stitch": {
       "command": "bash",
-      "args": ["./scripts/stitch-proxy.sh"]
+      "args": [
+        "./scripts/stitch-proxy.sh"
+      ]
     },
     "magic": {
       "command": "bash",
-      "args": ["./scripts/magic-mcp.sh"]
+      "args": [
+        "./scripts/magic-mcp.sh"
+      ]
     }
   }
 }
