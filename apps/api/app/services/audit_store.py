@@ -22,6 +22,9 @@ from app.domain.trading import (
     ProviderUsageSummary,
     SafetyState,
     StrategyUsageSummary,
+    SymbolPerformanceHistory,
+    SymbolPerformancePoint,
+    SymbolPerformanceSeries,
 )
 
 
@@ -379,6 +382,51 @@ def get_performance_history(limit: int = 80) -> PerformanceHistory:
         notes=[
             "History is built from local broker reconciliation snapshots.",
             "Run dashboard refreshes or the autopilot loop to keep this chart current.",
+        ],
+    )
+
+
+def get_symbol_performance_history(limit: int = 80) -> SymbolPerformanceHistory:
+    """Build per-symbol performance series from local reconciliation snapshots.
+
+    Each stored snapshot already carries the full position list, so this
+    reconstructs one time series per held symbol without any new recording.
+    """
+
+    snapshots = _read_jsonl("portfolio-snapshots.jsonl")[-limit:]
+    series_map: dict[str, list[SymbolPerformancePoint]] = {}
+
+    for event in snapshots:
+        payload = event.get("payload") or {}
+        positions = payload.get("positions") or []
+        created_at = event.get("created_at")
+        if not created_at:
+            continue
+        timestamp = datetime.fromisoformat(str(created_at))
+        for position in positions:
+            symbol = str(position.get("symbol") or "").upper()
+            if not symbol:
+                continue
+            raw_price = position.get("current_price")
+            series_map.setdefault(symbol, []).append(
+                SymbolPerformancePoint(
+                    timestamp=timestamp,
+                    market_value=float(position.get("market_value") or 0),
+                    unrealized_pl=float(position.get("unrealized_pl") or 0),
+                    unrealized_pl_percent=float(position.get("unrealized_pl_percent") or 0),
+                    current_price=float(raw_price) if raw_price is not None else None,
+                )
+            )
+
+    series = [
+        SymbolPerformanceSeries(symbol=symbol, points=points)
+        for symbol, points in sorted(series_map.items())
+    ]
+    return SymbolPerformanceHistory(
+        series=series,
+        notes=[
+            "Per-symbol history is reconstructed from stored broker reconciliation snapshots.",
+            "A symbol only has points for snapshots in which it was an open position.",
         ],
     )
 

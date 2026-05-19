@@ -110,6 +110,17 @@ class Settings(BaseSettings):
     # squeak through under the global 0.55 floor while a real model is
     # offline. Env override: ``INVESTMENT_APP_LOCAL_FALLBACK_MIN_SCORE``.
     local_fallback_min_score: float = 0.65
+    # Multiplicative haircut applied to the deterministic fallback's blended
+    # score when the broader market regime is risk-off or intraday volatility
+    # is extreme. The market-context component alone only moved the blended
+    # score ~0.01 - not enough to stand the bot down in hostile tape. These
+    # dampeners are decisive and tunable: a 0.72 candidate * 0.82 = 0.59,
+    # which falls under local_fallback_min_score and is rejected, while a
+    # genuinely exceptional setup near the 0.80 cap can still clear. Env
+    # overrides: ``INVESTMENT_APP_RISK_OFF_SCORE_MULTIPLIER`` /
+    # ``INVESTMENT_APP_EXTREME_VOLATILITY_SCORE_MULTIPLIER``.
+    risk_off_score_multiplier: float = 0.82
+    extreme_volatility_score_multiplier: float = 0.90
     max_entry_spread_bps: float = 75.0
     allow_live_trading: bool = False
     allow_outside_market_hours: bool = False
@@ -126,6 +137,16 @@ class Settings(BaseSettings):
     high_vol_symbols: str = DEFAULT_HIGH_VOL_SYMBOLS
     high_vol_position_size_multiplier: float = 0.5
     high_vol_min_pdt_slots_for_entry: int = 2
+    # Entry-notional haircut when the candidate's broader-market regime is
+    # risk-off or its volatility regime is extreme. Stacks multiplicatively
+    # with ``high_vol_position_size_multiplier``. Both clamp to the $1
+    # fractional minimum, so at very small NAV (entries already ~$1) this is
+    # a no-op and the scorer's regime dampener carries the defense; it bites
+    # once the account is large enough for sizing to matter. Env overrides:
+    # ``INVESTMENT_APP_RISK_OFF_POSITION_SIZE_MULTIPLIER`` /
+    # ``INVESTMENT_APP_EXTREME_VOL_POSITION_SIZE_MULTIPLIER``.
+    risk_off_position_size_multiplier: float = 0.5
+    extreme_vol_position_size_multiplier: float = 0.6
     pdt_capped_swing_entry_strategy_ids: str = "opening_range_breakout_v1"
     pdt_capped_swing_min_score: float = 0.78
     pdt_capped_swing_max_spread_bps: float = 40.0
@@ -140,16 +161,25 @@ class Settings(BaseSettings):
     low_portfolio_threshold: float = 50.0
     low_portfolio_small_win_percent: float = 2.5
     small_win_min_holding_minutes: int = 1440
-    # Hard cap on concurrent open positions while the account is under
-    # ``low_portfolio_threshold``. At small NAV, $1-3 lots fragment the
-    # portfolio so spread and PDT slot cost dominate signal edge. Block
-    # new entries (the risk gate rejects them) until exits free a slot.
-    # Env override: ``INVESTMENT_APP_LOW_NAV_MAX_OPEN_POSITIONS``.
+    # Intended hard cap on concurrent open positions while the account is
+    # under ``low_portfolio_threshold``. NOTE (2026-05-18): the risk-gate
+    # enforcement for this setting was removed in commit 069a9ba
+    # (2026-05-14); nothing reads this value today, so it is currently
+    # INERT. Fragmentation is now bounded only by ``max_open_positions``.
+    # Retained as a record of intent — re-add enforcement in
+    # ``risk_engine.py`` to make this live again.
     low_nav_max_open_positions: int = 4
     # Positions at or below this market value, held past the configured
     # min holding window, are surfaced as morning-defragmentation
     # candidates. Read-only; the operator decides whether to liquidate.
     defragmentation_max_market_value_dollars: float = 3.0
+    # Stale-laggard branch: positions ABOVE the dust floor but held
+    # >= ``defragmentation_loss_min_age_minutes`` AND showing an
+    # unrealized loss of at least ``defragmentation_loss_min_percent``
+    # are ALSO surfaced for defrag. Catches names like T at -1.71%
+    # MV $3.46 that drift below the dollar floor.
+    defragmentation_loss_min_percent: float = 1.0
+    defragmentation_loss_min_age_minutes: int = 2880  # 48h
     minimum_order_notional: float = 1.0
     allow_demo_live_entries: bool = False
     # When the rolling five-business-day day-trade count is at or above the

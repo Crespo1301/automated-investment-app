@@ -15,6 +15,7 @@ from app.domain.trading import (
     PortfolioState,
     RiskDecision,
     RiskLimits,
+    ScoredTradeCandidate,
     TradeCandidate,
 )
 from app.services.ai_scorer import TradeScorer
@@ -138,14 +139,14 @@ def run_single_cycle(
     )
 
     events = _get_cycle_events(event=event, broker=broker, limits=limits)
-    selected_event, candidate = _select_best_candidate(
+    fallback_event, lane_candidates = _select_lane_candidates(
         events,
         strategy,
         blocked_symbols=blocked_entry_symbols,
     )
-    if candidate is None:
+    if not lane_candidates:
         return PipelineRunResult(
-            event=selected_event,
+            event=fallback_event,
             candidate=None,
             scored_candidate=None,
             risk_decision=None,
@@ -153,9 +154,27 @@ def run_single_cycle(
             broker_receipt=None,
         )
 
-    candidate = _apply_symbol_volatility_sizing(candidate)
-    event = selected_event
-    scored_candidate = TradeScorer().score(candidate)
+    # Score the strongest candidate from every lane and let the scorer pick
+    # the winner. Selection used to be a raw confidence_hint max, which is
+    # not comparable across lanes; scoring each lane's best makes evidence
+    # quality, stop/reward, and market context the real tiebreaker. At most
+    # one candidate per strategy lane is scored (<= 6 scoring calls/cycle).
+    scorer = TradeScorer()
+    scored_lane_results: list[
+        tuple[MarketEvent, TradeCandidate, ScoredTradeCandidate]
+    ] = []
+    for lane_event, lane_candidate in lane_candidates:
+        sized_candidate = _apply_regime_sizing(
+            _apply_symbol_volatility_sizing(lane_candidate)
+        )
+        scored_lane_results.append(
+            (lane_event, sized_candidate, scorer.score(sized_candidate))
+        )
+
+    event, candidate, scored_candidate = max(
+        scored_lane_results,
+        key=lambda result: result[2].ai_score.score,
+    )
 
     risk_decision, execution_intent = RiskEngine(limits).evaluate(
         scored_candidate,
@@ -373,12 +392,25 @@ def _cycle_symbols(symbols: list[str]) -> list[str]:
     return selected[stride_offset:] + selected[:stride_offset]
 
 
-def _select_best_candidate(
+def _select_lane_candidates(
     events: list[MarketEvent],
     strategy: AggressiveStrategyEngine,
     blocked_symbols: set[str] | None = None,
-) -> tuple[MarketEvent, TradeCandidate | None]:
-    """Choose the strongest candidate from the current cycle's events."""
+) -> tuple[MarketEvent, list[tuple[MarketEvent, TradeCandidate]]]:
+    """Return the strongest candidate per strategy lane across the cycle's events.
+
+    Returns ``(fallback_event, lane_candidates)``. ``fallback_event`` is only
+    used to populate a no-candidate PipelineRunResult. ``lane_candidates``
+    holds at most one ``(event, candidate)`` pair per ``strategy_id`` - the
+    highest-confidence candidate that lane produced this cycle.
+
+    Selecting per lane (rather than a single global ``max`` over raw
+    ``confidence_hint``) is what lets every lane compete downstream on the
+    scorer's full judgment. ``confidence_hint`` is not calibrated across
+    lanes - each lane has a different floor and ceiling - so a raw cross-lane
+    max structurally crowned opening_range_breakout_v1 and made the autopilot
+    a one-lane bot.
+    """
 
     blocked_symbols = blocked_symbols or set()
     if not events:
@@ -390,22 +422,18 @@ def _select_best_candidate(
             previous_close=104.0,
             volume=350_000,
         )
-        return fallback_event, None
+        return fallback_event, []
 
-    selected_event = events[0]
-    selected_candidate = None
+    best_by_lane: dict[str, tuple[MarketEvent, TradeCandidate]] = {}
     for market_event in events:
         for candidate in strategy.evaluate_all(market_event):
             if candidate.symbol.upper() in blocked_symbols:
                 continue
-            if (
-                selected_candidate is None
-                or candidate.confidence_hint > selected_candidate.confidence_hint
-            ):
-                selected_event = market_event
-                selected_candidate = candidate
+            existing = best_by_lane.get(candidate.strategy_id)
+            if existing is None or candidate.confidence_hint > existing[1].confidence_hint:
+                best_by_lane[candidate.strategy_id] = (market_event, candidate)
 
-    return selected_event, selected_candidate
+    return events[0], list(best_by_lane.values())
 
 
 def _blocked_entry_symbols(broker: AlpacaBroker | None) -> set[str]:
@@ -505,6 +533,47 @@ def _apply_symbol_volatility_sizing(candidate: TradeCandidate) -> TradeCandidate
                 (
                     f"{candidate.symbol} is high-volatility tier; proposed notional reduced "
                     f"by {multiplier:.0%}."
+                ),
+            ],
+        }
+    )
+
+
+def _apply_regime_sizing(candidate: TradeCandidate) -> TradeCandidate:
+    """Trim entry notional when the broader market or volatility regime is hostile.
+
+    Stacks multiplicatively with ``_apply_symbol_volatility_sizing``. Both
+    clamp to the fractional minimum, so at very small NAV (entries already
+    near $1) this is a no-op and the scorer's regime dampener carries the
+    defense; it bites once the account is large enough for sizing to matter.
+    """
+
+    multiplier = 1.0
+    reasons: list[str] = []
+    if candidate.market_regime == "risk_off":
+        multiplier *= max(0.0, min(1.0, settings.risk_off_position_size_multiplier))
+        reasons.append("risk-off market regime")
+    if candidate.volatility_regime == "extreme":
+        multiplier *= max(0.0, min(1.0, settings.extreme_vol_position_size_multiplier))
+        reasons.append("extreme volatility regime")
+
+    if not reasons or multiplier >= 1.0:
+        return candidate
+
+    adjusted_notional = candidate.proposed_notional * multiplier
+    if candidate.proposed_notional >= settings.minimum_order_notional:
+        adjusted_notional = max(settings.minimum_order_notional, adjusted_notional)
+    if adjusted_notional >= candidate.proposed_notional:
+        return candidate
+
+    return candidate.model_copy(
+        update={
+            "proposed_notional": round(adjusted_notional, 2),
+            "trigger_evidence": [
+                *candidate.trigger_evidence,
+                (
+                    f"Entry notional reduced {1 - multiplier:.0%} for "
+                    f"{' and '.join(reasons)}."
                 ),
             ],
         }

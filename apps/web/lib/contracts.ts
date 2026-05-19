@@ -202,6 +202,24 @@ export type PerformanceHistory = {
   notes: string[];
 };
 
+export type SymbolPerformancePoint = {
+  timestamp: string;
+  market_value: number;
+  unrealized_pl: number;
+  unrealized_pl_percent: number;
+  current_price: number | null;
+};
+
+export type SymbolPerformanceSeries = {
+  symbol: string;
+  points: SymbolPerformancePoint[];
+};
+
+export type SymbolPerformanceHistory = {
+  series: SymbolPerformanceSeries[];
+  notes: string[];
+};
+
 export type ProviderUsageSummary = {
   provider: string;
   count: number;

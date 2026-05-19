@@ -1,5 +1,138 @@
 # Changelog
 
+## Unreleased - 2026-05-19 Claude pre-market patch
+
+Claude pre-market pass. The autopilot loop was found dead this morning:
+overnight (17:40 ET, 2026-05-18) it hit a transient DNS-resolution
+`ConnectionError` — almost certainly the WSL host sleeping — and
+`run_autopilot_loop` treated that infrastructure blip as fatal, tripping
+the kill switch and exiting the process. That left the 5 open positions
+with no automated exit coverage. Exit-only autopilot was restored at
+09:42 ET and the loop hardened against a repeat. Codex: review, run
+backend tests + web build, then push.
+
+### Fixed
+
+- The autopilot loop no longer permanently disables itself on a
+  transient network error. `run_autopilot_loop` now classifies the
+  exception: a transient network blip (DNS failure, dropped connection,
+  timeout — `requests`/`urllib3` connection/timeout errors, builtin
+  `ConnectionError`/`TimeoutError`, `socket.gaierror`) is retried for up
+  to `_TRANSIENT_ERROR_RETRY_BUDGET` (6) consecutive ticks while the
+  loop stays armed, surfaced as a `transient_network_retry:n/6`
+  heartbeat. Only an outage that persists past that budget — or any
+  non-network exception — still trips the unchanged fail-safe (kill
+  switch + disarm + raise). The kill switch keeps firing on genuine
+  faults; it no longer false-fires on infrastructure noise and kills
+  exit protection for the rest of a session.
+- `/api/risk/exit-check` no longer mislabels its read-only preview. The
+  exit monitor appended "execution is locked by
+  `INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=false`" whenever a signal could
+  not execute, but the read-only route always passes `execute=False`,
+  so the dashboard exit panel showed that note even when `ALLOW_EXITS`
+  is `true`. The note now reports the real cause — the `ALLOW_EXITS`
+  message only when the flag is genuinely false, otherwise a "read-only
+  preview" note. Display copy only; no exit logic changed.
+
+### Safety Notes
+
+- Exit-only autopilot was re-armed and the loop relaunched after a
+  transient-error auto-disable; entries remain OFF
+  (`INVESTMENT_APP_AUTOPILOT_ALLOW_ENTRIES=false`). The kill switch was
+  cleared because it had tripped on a network blip, not a trading or
+  risk event. No `.env` or risk-gate values were changed.
+- No trading logic, scorer, risk-gate math, sizing, or exit decision
+  logic changed — only loop error-handling and one operator-facing note
+  string.
+
+### Codex Handoff
+
+- Files touched: `apps/api/app/services/autopilot.py`,
+  `apps/api/app/services/exit_monitor.py`, `CHANGELOG.md`,
+  `docs/premarket-2026-05-19.md`.
+- Validation: `pytest -q` → 120 passed locally. Loop-resilience tests
+  are not yet written — see `docs/premarket-2026-05-19.md` for the
+  recommended cases.
+- The live loop (relaunched 09:42 ET) already runs the resilience fix;
+  the API server predates both edits. A normal build/restart picks them
+  up — see the briefing doc.
+- See `docs/premarket-2026-05-19.md` for full context and the
+  still-open items carried from the 2026-05-18 handoff.
+
+## Unreleased - 2026-05-18 Claude session patch
+
+Claude pre-market + intraday session. Operator hit a confusing "404 Not
+Found" when manually selling IWM from the dashboard. Root cause: the IWM
+lot is worth $0.98, just under the $1.00 `minimum_order_notional` guard,
+so `submit_position_market_sell` raised a guard `ValueError` that the
+route blanket-mapped to HTTP 404 — hiding the real reason from the
+operator. Codex: please review, run backend tests + web build, then
+push.
+
+### Fixed
+
+- Manual broker sell/protect endpoints no longer report guard rejections
+  as `404 Not Found`. Added `PositionNotFoundError` (a `ValueError`
+  subclass) raised only when a symbol genuinely has no open long
+  position. `POST /api/broker/positions/{symbol}/sell-market` and
+  `/protect-oco` now return `404` only for that case and `409 Conflict`
+  for guard rejections on an existing position (sub-minimum notional, an
+  open sell already pending, partial-sell rounds to zero). The
+  informative detail string now reaches the dashboard with a status code
+  that matches the market-closed / PDT rejections alongside it.
+- Web root layout: `<body suppressHydrationWarning>` to silence a benign
+  React hydration mismatch caused by browser extensions (Grammarly)
+  injecting `data-gr-ext-installed` / `data-new-gr-c-s-check-loaded`
+  attributes before hydration. Element-scoped only — genuine markup
+  drift elsewhere is still reported.
+
+### Added
+
+- Sell a position by **dollar amount** from the dashboard. Alpaca's
+  position-sell API only accepts a share `qty`, so
+  `submit_position_market_sell` now takes an optional `dollars` argument
+  (mutually exclusive with `percent`) and converts it to shares against
+  live market value: `qty = quantity * dollars / market_value`. A
+  `dollars` value at or above the position's market value sells it
+  whole. `POST /api/broker/positions/{symbol}/sell-market` accepts
+  `?dollars=`; the dashboard sell control is now a dollar input
+  (placeholder shows the max sellable value) instead of a percent
+  dropdown. `percent` remains supported for programmatic callers.
+- Partial-sell **remainder guard**. Any partial sell (dollars or
+  percent) that would leave a lot below `minimum_order_notional` ($1.00)
+  is now rejected with a message telling the operator to sell the full
+  position instead — stops the dashboard from creating new stranded
+  sub-minimum lots like the $0.98 IWM lot.
+
+### Changed
+
+- `apps/api/.env`: `MAX_OPEN_POSITIONS` `25 → 8`. On a ~$49 NAV account a
+  cap of 25 guarantees fragmentation into sub-$3 lots; 8 restores the
+  `max_open_positions` risk gate as a real fragmentation brake. Inert
+  until autopilot is re-armed; requires an API restart to load.
+
+### Removed (CHANGELOG correction)
+
+- The "Low-NAV fragmentation guard in the risk gate" entry in the
+  `2026-05-13 EOD patch` section below is **inaccurate** — that guard was
+  reverted in commit `069a9ba` (2026-05-14). `low_nav_max_open_positions`
+  is now an inert setting; `max_open_positions` is the live brake.
+  Codex: decide whether to delete the setting or re-add NAV-scaled
+  enforcement, then clean up that stale "Added" line.
+
+### Codex Handoff
+
+- Files touched: `apps/api/app/services/broker_adapter.py`,
+  `apps/api/app/api/routes.py`, `apps/web/app/page.tsx`,
+  `apps/web/app/layout.tsx`, `apps/api/.env` (local-only),
+  `CHANGELOG.md`, `docs/handoff-2026-05-18.md`.
+- No trading logic, scorer, risk-gate math, or exit logic changed —
+  status-code mapping, the dollars→shares sell conversion + remainder
+  guard, and a hydration attribute.
+- Suggested checks: backend tests, `npm run build:web`,
+  `npm run lint:web`, then commit/push/release.
+- See `docs/handoff-2026-05-18.md` for the full context and open items.
+
 ## Unreleased - 2026-05-13 EOD patch
 
 Joint Claude/Codex EOD review of the May 13 session. Both passes agreed

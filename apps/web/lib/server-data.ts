@@ -8,6 +8,7 @@ import type {
   ProfitLockReport,
   ProtectionPlan,
   RiskLimits,
+  SymbolPerformanceHistory,
 } from "@/lib/contracts";
 
 export const apiBaseUrl = process.env.INVESTMENT_WEB_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -58,6 +59,10 @@ export function getDailyRecap() {
 
 export function getPerformanceHistory() {
   return getApi<PerformanceHistory>("/api/performance/history");
+}
+
+export function getSymbolPerformanceHistory() {
+  return getApi<SymbolPerformanceHistory>("/api/performance/symbol-history");
 }
 
 export function getTradingConfig() {

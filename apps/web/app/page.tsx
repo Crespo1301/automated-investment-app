@@ -132,7 +132,16 @@ async function sellPosition(formData: FormData) {
   const symbol = String(formData.get("symbol") || "").trim().toUpperCase();
   const confirmation = String(formData.get("confirmation") || "").trim().toUpperCase();
   if (!symbol || confirmation !== `SELL ${symbol}`) return;
-  await postApi(`/api/broker/positions/${encodeURIComponent(symbol)}/sell-market`);
+  // Operator sells by dollar amount. Alpaca only accepts a share quantity on
+  // a position sell, so the API converts dollars to shares against live
+  // market value. Blank / invalid / non-positive -> whole-position sell.
+  const dollarsRaw = String(formData.get("dollars") || "").trim();
+  const dollars = Number(dollarsRaw);
+  const query =
+    dollarsRaw !== "" && Number.isFinite(dollars) && dollars > 0
+      ? `?dollars=${dollars}`
+      : "";
+  await postApi(`/api/broker/positions/${encodeURIComponent(symbol)}/sell-market${query}`);
 }
 
 async function protectPosition(formData: FormData) {
@@ -326,6 +335,15 @@ export default async function HomePage() {
                     </span>
                     <form action={sellPosition} className="inline-form table-action">
                       <input name="symbol" type="hidden" value={position.symbol} />
+                      <input
+                        name="dollars"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        max={position.market_value.toFixed(2)}
+                        placeholder={`$ (max ${position.market_value.toFixed(2)})`}
+                        aria-label={`Dollar amount to sell for ${position.symbol}, blank sells all`}
+                      />
                       <input name="confirmation" placeholder={`SELL ${position.symbol}`} />
                       <button className="danger-action" disabled={!marketOpen} type="submit">Sell</button>
                     </form>

@@ -26,6 +26,7 @@ from app.services.broker_adapter import (
     AlpacaBroker,
     LocalPaperBroker,
     MissingBrokerCredentialsError,
+    PositionNotFoundError,
     _detect_day_trade_records,
     missing_alpaca_credential_names,
 )
@@ -2208,7 +2209,7 @@ def test_exit_check_does_not_execute_when_market_is_closed() -> None:
                 ],
             )
 
-        def submit_position_market_sell(self, symbol):
+        def submit_position_market_sell(self, symbol, percent=None):
             self.submitted = True
             raise AssertionError("sell should not be submitted while market is closed")
 
@@ -2271,7 +2272,7 @@ def test_exit_check_blocks_fourth_rolling_day_trade() -> None:
                 ],
             )
 
-        def submit_position_market_sell(self, symbol):
+        def submit_position_market_sell(self, symbol, percent=None):
             self.submitted = True
             raise AssertionError("sell should be blocked by PDT guard")
 
@@ -2343,7 +2344,7 @@ def test_small_win_does_not_spend_reserved_pdt_slot() -> None:
                 ],
             )
 
-        def submit_position_market_sell(self, symbol):
+        def submit_position_market_sell(self, symbol, percent=None):
             self.submitted = True
             raise AssertionError("small-win should preserve the final PDT slot")
 
@@ -2516,3 +2517,749 @@ def test_pdt_traps_new_entry_blocks_high_vol_when_slots_are_low(monkeypatch) -> 
     monkeypatch.setattr(settings, "high_vol_symbols", "IONQ")
     monkeypatch.setattr(settings, "high_vol_min_pdt_slots_for_entry", 2)
     assert _pdt_traps_new_entry(2, 3, "high_upside_momentum_v1", "IONQ") is True
+
+
+# -----------------------------------------------------------------------------
+# Defragmentation: stale-laggard branch
+# -----------------------------------------------------------------------------
+
+def test_defragmentation_surfaces_stale_laggard_above_dust_floor(monkeypatch) -> None:
+    """Position above $3 floor but held >48h with >1% loss is flagged."""
+    from app.services.exit_monitor import get_defragmentation_report
+    from app.domain.trading import BrokerReconciliationSnapshot
+
+    monkeypatch.setattr(settings, "defragmentation_max_market_value_dollars", 3.0)
+    monkeypatch.setattr(settings, "defragmentation_loss_min_percent", 1.0)
+    monkeypatch.setattr(settings, "defragmentation_loss_min_age_minutes", 2880)
+
+    now = datetime.now(UTC)
+    old_fill = now - timedelta(hours=72)  # 3 days
+
+    laggard = BrokerPositionSummary(
+        symbol="T",
+        quantity=0.14,
+        market_value=3.46,
+        cost_basis=3.52,
+        unrealized_pl=-0.06,
+        unrealized_pl_percent=-0.0171,
+        current_price=24.66,
+    )
+    fresh_loser = BrokerPositionSummary(
+        symbol="FRESH",
+        quantity=1.0,
+        market_value=3.50,
+        cost_basis=3.55,
+        unrealized_pl=-0.05,
+        unrealized_pl_percent=-0.014,
+        current_price=3.50,
+    )
+    buy_t = BrokerOrderSummary(
+        broker_order_id="o1",
+        client_order_id="c1",
+        symbol="T",
+        side="OrderSide.BUY",
+        order_type="OrderType.MARKET",
+        status="OrderStatus.FILLED",
+        submitted_quantity=None,
+        submitted_notional=3.52,
+        filled_quantity=0.14,
+        filled_average_price=25.14,
+        submitted_at=old_fill,
+        filled_at=old_fill,
+    )
+    buy_fresh = BrokerOrderSummary(
+        broker_order_id="o2",
+        client_order_id="c2",
+        symbol="FRESH",
+        side="OrderSide.BUY",
+        order_type="OrderType.MARKET",
+        status="OrderStatus.FILLED",
+        submitted_quantity=None,
+        submitted_notional=3.55,
+        filled_quantity=1.0,
+        filled_average_price=3.55,
+        submitted_at=now - timedelta(hours=2),
+        filled_at=now - timedelta(hours=2),
+    )
+
+    class FakeBroker:
+        def get_reconciliation_snapshot(self, order_limit=50):
+            class Snap:
+                positions = [laggard, fresh_loser]
+                orders = [buy_t, buy_fresh]
+            return Snap()
+
+    report = get_defragmentation_report(FakeBroker())
+    symbols = {c.symbol for c in report.candidates}
+    assert "T" in symbols, "stale laggard T should be flagged"
+    assert "FRESH" not in symbols, "fresh loser should not be flagged"
+
+
+def test_defragmentation_still_flags_dust_below_floor(monkeypatch) -> None:
+    """Original dust rule still works: MV<=$3 held past min_holding window."""
+    from app.services.exit_monitor import get_defragmentation_report
+
+    monkeypatch.setattr(settings, "defragmentation_max_market_value_dollars", 3.0)
+    monkeypatch.setattr(settings, "small_win_min_holding_minutes", 1440)
+
+    now = datetime.now(UTC)
+    old_fill = now - timedelta(hours=30)
+
+    dust = BrokerPositionSummary(
+        symbol="AMZN",
+        quantity=0.004,
+        market_value=1.00,
+        cost_basis=1.00,
+        unrealized_pl=0.0006,
+        unrealized_pl_percent=0.0006,
+        current_price=267.29,
+    )
+    buy = BrokerOrderSummary(
+        broker_order_id="o1",
+        client_order_id="c1",
+        symbol="AMZN",
+        side="OrderSide.BUY",
+        order_type="OrderType.MARKET",
+        status="OrderStatus.FILLED",
+        submitted_quantity=None,
+        submitted_notional=1.00,
+        filled_quantity=0.004,
+        filled_average_price=250.0,
+        submitted_at=old_fill,
+        filled_at=old_fill,
+    )
+
+    class FakeBroker:
+        def get_reconciliation_snapshot(self, order_limit=50):
+            class Snap:
+                positions = [dust]
+                orders = [buy]
+            return Snap()
+
+    report = get_defragmentation_report(FakeBroker())
+    assert any(c.symbol == "AMZN" for c in report.candidates)
+
+
+# -----------------------------------------------------------------------------
+# Manual sell endpoint: PDT guard
+# -----------------------------------------------------------------------------
+
+def test_manual_sell_blocks_pdt_burning_round_trip(monkeypatch) -> None:
+    """sell-market endpoint refuses when sell would be a same-day round trip at PDT cap."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    class FakeClock:
+        is_open = True
+
+    class FakeGuard:
+        would_be_day_trade = True
+        allowed = False
+        reason = "PDT cap reached"
+        day_trades_5_business_days = 3
+        max_day_trades_5_business_days = 3
+        local_day_trades_5_business_days = 3
+        broker_day_trades_5_business_days = 3
+
+    class FakeBroker:
+        def get_market_clock(self):
+            return FakeClock()
+
+        def get_day_trade_guard(self, symbol):
+            return FakeGuard()
+
+        def submit_position_market_sell(self, symbol, percent=None):
+            raise AssertionError("Sell should have been blocked")
+
+    monkeypatch.setattr("app.api.routes.get_active_alpaca_broker", lambda: FakeBroker())
+    client = TestClient(app)
+
+    r = client.post("/api/broker/positions/NIO/sell-market")
+    assert r.status_code == 409
+    assert "PDT" in r.json()["detail"]
+
+
+def test_manual_sell_allows_pdt_burn_with_force_flag(monkeypatch) -> None:
+    """Operator can override the PDT guard via ?force_pdt=true."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    class FakeClock:
+        is_open = True
+
+    class FakeReceipt:
+        def model_dump(self, mode="json"):
+            return {"symbol": "NIO", "status": "accepted"}
+
+    class FakeBroker:
+        def get_market_clock(self):
+            return FakeClock()
+
+        def get_day_trade_guard(self, symbol):
+            raise AssertionError("Guard should not be consulted when force_pdt=true")
+
+        def submit_position_market_sell(self, symbol, percent=None, dollars=None):
+            return FakeReceipt()
+
+    monkeypatch.setattr("app.api.routes.get_active_alpaca_broker", lambda: FakeBroker())
+    monkeypatch.setattr("app.api.routes.record_order_receipt", lambda r: None)
+    client = TestClient(app)
+
+    r = client.post("/api/broker/positions/NIO/sell-market?force_pdt=true")
+    assert r.status_code == 200
+    assert r.json()["receipt"]["symbol"] == "NIO"
+
+
+def test_manual_sell_allows_non_round_trip_at_cap(monkeypatch) -> None:
+    """At PDT cap but no same-day buy → sell is allowed (just closing an old position)."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    class FakeClock:
+        is_open = True
+
+    class FakeGuard:
+        would_be_day_trade = False
+        allowed = True
+        reason = "Sell is not a same-day round trip."
+        day_trades_5_business_days = 3
+        max_day_trades_5_business_days = 3
+        local_day_trades_5_business_days = 3
+        broker_day_trades_5_business_days = 3
+
+    class FakeReceipt:
+        def model_dump(self, mode="json"):
+            return {"symbol": "T", "status": "accepted"}
+
+    class FakeBroker:
+        def get_market_clock(self):
+            return FakeClock()
+
+        def get_day_trade_guard(self, symbol):
+            return FakeGuard()
+
+        def submit_position_market_sell(self, symbol, percent=None, dollars=None):
+            return FakeReceipt()
+
+    monkeypatch.setattr("app.api.routes.get_active_alpaca_broker", lambda: FakeBroker())
+    monkeypatch.setattr("app.api.routes.record_order_receipt", lambda r: None)
+    client = TestClient(app)
+
+    r = client.post("/api/broker/positions/T/sell-market")
+    assert r.status_code == 200
+
+
+# --- Autopilot fallback adjustments: lane diversity + regime awareness ------
+
+
+def _regime_test_candidate(
+    *, market_regime: str = "unknown", volatility_regime: str = "unknown"
+) -> TradeCandidate:
+    """A solid opening-range candidate used to isolate a single regime effect."""
+
+    return TradeCandidate(
+        correlation_id="evt_regime",
+        strategy_id="opening_range_breakout_v1",
+        symbol="SPY",
+        side="buy",
+        proposed_notional=8.0,
+        proposed_entry=105.0,
+        proposed_stop=103.42,
+        proposed_take_profit=111.30,
+        trigger_evidence=[
+            "Price broke opening range high by 0.40%.",
+            "Price is 0.80% above previous close.",
+            "Recent volume is 2.10x the recent average.",
+            "Candidate created by opening range breakout lane.",
+        ],
+        confidence_hint=0.80,
+        market_regime=market_regime,
+        volatility_regime=volatility_regime,
+    )
+
+
+def test_local_heuristic_risk_off_regime_dampens_score() -> None:
+    """A risk-off broader market must multiplicatively haircut the fallback
+    score, not just nudge it ~0.01. The same candidate in a risk-on tape
+    scores materially higher, and the dampener is explained in concerns."""
+
+    risk_on = TradeScorer().score(_regime_test_candidate(market_regime="risk_on"))
+    risk_off = TradeScorer().score(_regime_test_candidate(market_regime="risk_off"))
+
+    assert risk_off.ai_score.score < risk_on.ai_score.score
+    # Must bite hard enough to change decisions, far more than the ~0.01 the
+    # market-context component moved on its own.
+    assert risk_on.ai_score.score - risk_off.ai_score.score > 0.05
+    assert any(
+        "Risk-off market regime applied" in concern
+        for concern in risk_off.ai_score.concerns
+    )
+
+
+def test_local_heuristic_extreme_volatility_dampens_score() -> None:
+    """An extreme intraday volatility regime also haircuts the fallback score."""
+
+    normal = TradeScorer().score(_regime_test_candidate(volatility_regime="normal"))
+    extreme = TradeScorer().score(_regime_test_candidate(volatility_regime="extreme"))
+
+    assert extreme.ai_score.score < normal.ai_score.score
+    assert any(
+        "Extreme volatility regime applied" in concern
+        for concern in extreme.ai_score.concerns
+    )
+
+
+def test_select_lane_candidates_returns_one_per_lane() -> None:
+    """Selection surfaces the best candidate from EVERY lane that fired, not a
+    single global confidence_hint max. This is what lets the scorer - not an
+    un-normalized per-lane formula - pick the trade."""
+
+    from app.services.local_worker import _select_lane_candidates
+
+    engine = AggressiveStrategyEngine(
+        allowed_symbols=["SPY"],
+        proposed_notional=8.0,
+        breakout_threshold=0.0025,
+        min_volume=25_000,
+        stop_loss_percent=0.025,
+    )
+    # An event rich enough to trip several deterministic lanes at once.
+    event = MarketEvent(
+        source="test",
+        symbol="SPY",
+        event_kind="bar",
+        price=101,
+        previous_close=100,
+        previous_bar_close=99.95,
+        volume=50_000,
+        vwap=100.1,
+        opening_range_high=100.5,
+        opening_range_low=99.5,
+        recent_high=101.2,
+        recent_low=100.0,
+        recent_volume=700_000,
+        average_recent_volume=50_000,
+    )
+
+    _fallback_event, lane_candidates = _select_lane_candidates([event], engine)
+    strategy_ids = [candidate.strategy_id for _evt, candidate in lane_candidates]
+
+    assert len(strategy_ids) >= 3
+    # Each lane appears at most once - no lane can crowd out the others.
+    assert len(strategy_ids) == len(set(strategy_ids))
+    assert "opening_range_breakout_v1" in strategy_ids
+    assert "vwap_reclaim_v1" in strategy_ids
+
+
+def test_apply_regime_sizing_trims_notional_in_risk_off() -> None:
+    """Regime-aware sizing cuts entry notional in a risk-off tape and leaves a
+    risk-on candidate untouched."""
+
+    from app.services.local_worker import _apply_regime_sizing
+
+    risk_off = _apply_regime_sizing(_regime_test_candidate(market_regime="risk_off"))
+    risk_on = _apply_regime_sizing(_regime_test_candidate(market_regime="risk_on"))
+
+    expected = round(8.0 * settings.risk_off_position_size_multiplier, 2)
+    assert risk_off.proposed_notional == expected
+    assert risk_off.proposed_notional < 8.0
+    assert any(
+        "risk-off market regime" in line for line in risk_off.trigger_evidence
+    )
+    assert risk_on.proposed_notional == 8.0
+
+
+# --- Partial (percentage) position sells -----------------------------------
+
+
+def test_broker_partial_sell_submits_fractional_quantity() -> None:
+    """A partial percent sizes the sell order to that share of the position
+    and reports the partial notional, tagged as a trim."""
+
+    submitted: dict[str, object] = {}
+
+    class FakeOrder:
+        id = "ord_partial"
+        status = "accepted"
+
+    class FakeClient:
+        def submit_order(self, order_data):
+            submitted["qty"] = order_data.qty
+            return FakeOrder()
+
+    broker = object.__new__(AlpacaBroker)
+    broker.client = FakeClient()
+    broker.list_positions = lambda: [
+        BrokerPositionSummary(
+            symbol="NVDA",
+            quantity=0.40,
+            market_value=80.0,
+            cost_basis=76.0,
+            unrealized_pl=4.0,
+            unrealized_pl_percent=0.05,
+            current_price=200.0,
+        )
+    ]
+    broker._has_open_sell_order = lambda symbol: False
+
+    receipt = broker.submit_position_market_sell("NVDA", percent=25)
+
+    # 25% of 0.40 shares = 0.10 shares; 25% of $80 = $20.
+    assert abs(float(submitted["qty"]) - 0.10) < 1e-9
+    assert abs(receipt.submitted_notional - 20.0) < 1e-9
+    assert receipt.side == "sell"
+    assert "manual_trim" in receipt.intent_id
+
+
+def test_broker_dollar_sell_converts_to_fractional_quantity() -> None:
+    """A dollar-denominated sell converts against live market value."""
+
+    submitted: dict[str, object] = {}
+
+    class FakeOrder:
+        id = "ord_dollar_partial"
+        status = "accepted"
+
+    class FakeClient:
+        def submit_order(self, order_data):
+            submitted["qty"] = order_data.qty
+            return FakeOrder()
+
+    broker = object.__new__(AlpacaBroker)
+    broker.client = FakeClient()
+    broker.list_positions = lambda: [
+        BrokerPositionSummary(
+            symbol="NVDA",
+            quantity=0.40,
+            market_value=80.0,
+            cost_basis=76.0,
+            unrealized_pl=4.0,
+            unrealized_pl_percent=0.05,
+            current_price=200.0,
+        )
+    ]
+    broker._has_open_sell_order = lambda symbol: False
+
+    receipt = broker.submit_position_market_sell("NVDA", dollars=20)
+
+    assert abs(float(submitted["qty"]) - 0.10) < 1e-9
+    assert abs(receipt.submitted_notional - 20.0) < 1e-9
+    assert receipt.side == "sell"
+    assert "manual_trim" in receipt.intent_id
+
+
+def test_broker_partial_sell_below_minimum_raises() -> None:
+    """A partial whose proceeds fall under the fractional minimum is refused
+    rather than submitting a sub-minimum order."""
+
+    class FakeClient:
+        def submit_order(self, order_data):
+            raise AssertionError("sub-minimum partial sell must not be submitted")
+
+    broker = object.__new__(AlpacaBroker)
+    broker.client = FakeClient()
+    broker.list_positions = lambda: [
+        BrokerPositionSummary(
+            symbol="T",
+            quantity=0.12,
+            market_value=3.0,
+            cost_basis=3.1,
+            unrealized_pl=-0.1,
+            unrealized_pl_percent=-0.03,
+            current_price=25.0,
+        )
+    ]
+    broker._has_open_sell_order = lambda symbol: False
+
+    # 25% of a $3.00 position = $0.75, below the $1 minimum.
+    with pytest.raises(ValueError, match="minimum order guard"):
+        broker.submit_position_market_sell("T", percent=25)
+
+
+def test_broker_partial_sell_remainder_below_minimum_raises() -> None:
+    """A trim that would strand a sub-minimum remainder is refused."""
+
+    class FakeClient:
+        def submit_order(self, order_data):
+            raise AssertionError("stranded-lot partial sell must not be submitted")
+
+    broker = object.__new__(AlpacaBroker)
+    broker.client = FakeClient()
+    broker.list_positions = lambda: [
+        BrokerPositionSummary(
+            symbol="IWM",
+            quantity=0.03,
+            market_value=1.20,
+            cost_basis=1.18,
+            unrealized_pl=0.02,
+            unrealized_pl_percent=0.017,
+            current_price=40.0,
+        )
+    ]
+    broker._has_open_sell_order = lambda symbol: False
+
+    with pytest.raises(ValueError, match="unsellable stranded lot"):
+        broker.submit_position_market_sell("IWM", dollars=1.05)
+
+
+def test_broker_full_sell_unchanged_when_percent_omitted() -> None:
+    """Omitting percent (or passing 100) sells the whole position and is
+    tagged as a full exit - prior behavior preserved exactly."""
+
+    submitted: dict[str, object] = {}
+
+    class FakeOrder:
+        id = "ord_full"
+        status = "accepted"
+
+    class FakeClient:
+        def submit_order(self, order_data):
+            submitted["qty"] = order_data.qty
+            return FakeOrder()
+
+    broker = object.__new__(AlpacaBroker)
+    broker.client = FakeClient()
+    broker.list_positions = lambda: [
+        BrokerPositionSummary(
+            symbol="SPY",
+            quantity=0.25,
+            market_value=125.0,
+            cost_basis=120.0,
+            unrealized_pl=5.0,
+            unrealized_pl_percent=0.04,
+            current_price=500.0,
+        )
+    ]
+    broker._has_open_sell_order = lambda symbol: False
+
+    receipt = broker.submit_position_market_sell("SPY")
+
+    assert abs(float(submitted["qty"]) - 0.25) < 1e-9
+    assert abs(receipt.submitted_notional - 125.0) < 1e-9
+    assert "manual_exit" in receipt.intent_id
+    # percent=100 is the boundary and must also take the full-exit path.
+    assert "manual_exit" in broker.submit_position_market_sell("SPY", percent=100).intent_id
+
+
+def test_sell_market_route_rejects_out_of_range_percent() -> None:
+    """The sell-market route rejects a percent outside (0, 100]."""
+
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+
+    assert client.post("/api/broker/positions/NVDA/sell-market?percent=150").status_code == 400
+    assert client.post("/api/broker/positions/NVDA/sell-market?percent=0").status_code == 400
+
+
+def test_sell_market_route_threads_percent_to_broker(monkeypatch) -> None:
+    """A valid percent on the route reaches the broker as a partial sell."""
+
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    received: dict[str, object] = {}
+
+    class FakeClock:
+        is_open = True
+
+    class FakeGuard:
+        would_be_day_trade = False
+        allowed = True
+        day_trades_5_business_days = 0
+        max_day_trades_5_business_days = 3
+
+    class FakeReceipt:
+        def model_dump(self, mode="json"):
+            return {"symbol": "NVDA", "status": "accepted"}
+
+    class FakeBroker:
+        def get_market_clock(self):
+            return FakeClock()
+
+        def get_day_trade_guard(self, symbol):
+            return FakeGuard()
+
+        def submit_position_market_sell(self, symbol, percent=None, dollars=None):
+            received["percent"] = percent
+            return FakeReceipt()
+
+    monkeypatch.setattr("app.api.routes.get_active_alpaca_broker", lambda: FakeBroker())
+    monkeypatch.setattr("app.api.routes.record_order_receipt", lambda r: None)
+    client = TestClient(app)
+
+    r = client.post("/api/broker/positions/NVDA/sell-market?percent=40")
+    assert r.status_code == 200
+    assert received["percent"] == 40
+
+
+def test_sell_market_route_threads_dollars_to_broker(monkeypatch) -> None:
+    """A valid dollars value on the route reaches the broker unchanged."""
+
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    received: dict[str, object] = {}
+
+    class FakeClock:
+        is_open = True
+
+    class FakeGuard:
+        would_be_day_trade = False
+        allowed = True
+        day_trades_5_business_days = 0
+        max_day_trades_5_business_days = 3
+
+    class FakeReceipt:
+        def model_dump(self, mode="json"):
+            return {"symbol": "NVDA", "status": "accepted"}
+
+    class FakeBroker:
+        def get_market_clock(self):
+            return FakeClock()
+
+        def get_day_trade_guard(self, symbol):
+            return FakeGuard()
+
+        def submit_position_market_sell(self, symbol, percent=None, dollars=None):
+            received["percent"] = percent
+            received["dollars"] = dollars
+            return FakeReceipt()
+
+    monkeypatch.setattr("app.api.routes.get_active_alpaca_broker", lambda: FakeBroker())
+    monkeypatch.setattr("app.api.routes.record_order_receipt", lambda r: None)
+    client = TestClient(app)
+
+    r = client.post("/api/broker/positions/NVDA/sell-market?dollars=2.5")
+    assert r.status_code == 200
+    assert received["percent"] is None
+    assert received["dollars"] == 2.5
+
+
+def test_sell_market_route_maps_missing_position_to_404(monkeypatch) -> None:
+    """A genuine missing position stays a 404."""
+
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    class FakeClock:
+        is_open = True
+
+    class FakeGuard:
+        would_be_day_trade = False
+        allowed = True
+        day_trades_5_business_days = 0
+        max_day_trades_5_business_days = 3
+
+    class FakeBroker:
+        def get_market_clock(self):
+            return FakeClock()
+
+        def get_day_trade_guard(self, symbol):
+            return FakeGuard()
+
+        def submit_position_market_sell(self, symbol, percent=None, dollars=None):
+            raise PositionNotFoundError(f"No open long position found for {symbol}.")
+
+    monkeypatch.setattr("app.api.routes.get_active_alpaca_broker", lambda: FakeBroker())
+    client = TestClient(app)
+
+    r = client.post("/api/broker/positions/NVDA/sell-market?dollars=2")
+    assert r.status_code == 404
+    assert "No open long position found" in r.json()["detail"]
+
+
+def test_sell_market_route_maps_guard_rejection_to_409(monkeypatch) -> None:
+    """Guard rejections on an existing position surface as 409 conflicts."""
+
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    class FakeClock:
+        is_open = True
+
+    class FakeGuard:
+        would_be_day_trade = False
+        allowed = True
+        day_trades_5_business_days = 0
+        max_day_trades_5_business_days = 3
+
+    class FakeBroker:
+        def get_market_clock(self):
+            return FakeClock()
+
+        def get_day_trade_guard(self, symbol):
+            return FakeGuard()
+
+        def submit_position_market_sell(self, symbol, percent=None, dollars=None):
+            raise ValueError(
+                "Partial sell of IWM ($0.30) would leave $0.90 behind, below the $1.00 minimum order guard — an unsellable stranded lot. Sell the full position instead."
+            )
+
+    monkeypatch.setattr("app.api.routes.get_active_alpaca_broker", lambda: FakeBroker())
+    client = TestClient(app)
+
+    r = client.post("/api/broker/positions/IWM/sell-market?dollars=0.3")
+    assert r.status_code == 409
+    assert "unsellable stranded lot" in r.json()["detail"]
+
+
+# --- Per-symbol performance history ----------------------------------------
+
+
+def test_symbol_performance_history_reconstructs_per_symbol_series() -> None:
+    """Per-symbol history is rebuilt from stored reconciliation snapshots:
+    one series per held symbol, points in snapshot order."""
+
+    from app.domain.trading import BrokerAccountStatus, BrokerReconciliationSnapshot
+    from app.services.audit_store import (
+        get_symbol_performance_history,
+        record_reconciliation_snapshot,
+    )
+
+    def snapshot(nvda_pl_pct: float, spy_pl_pct: float) -> BrokerReconciliationSnapshot:
+        return BrokerReconciliationSnapshot(
+            account=BrokerAccountStatus(
+                broker="test",
+                account_mode="live",
+                account_id_hint="local",
+                status="active",
+                currency="USD",
+                buying_power=10,
+                cash=10,
+                portfolio_value=100,
+            ),
+            orders=[],
+            positions=[
+                BrokerPositionSummary(
+                    symbol="NVDA",
+                    quantity=0.2,
+                    market_value=40,
+                    cost_basis=38,
+                    unrealized_pl=2,
+                    unrealized_pl_percent=nvda_pl_pct,
+                    current_price=200,
+                ),
+                BrokerPositionSummary(
+                    symbol="SPY",
+                    quantity=0.1,
+                    market_value=50,
+                    cost_basis=49,
+                    unrealized_pl=1,
+                    unrealized_pl_percent=spy_pl_pct,
+                    current_price=500,
+                ),
+            ],
+        )
+
+    record_reconciliation_snapshot(snapshot(0.01, 0.005))
+    record_reconciliation_snapshot(snapshot(0.03, -0.01))
+
+    history = get_symbol_performance_history()
+
+    assert {s.symbol for s in history.series} == {"NVDA", "SPY"}
+    nvda = next(s for s in history.series if s.symbol == "NVDA")
+    assert len(nvda.points) == 2
+    assert nvda.points[-1].unrealized_pl_percent == 0.03
+    assert nvda.points[0].current_price == 200

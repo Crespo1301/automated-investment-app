@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "session_date": "2026-05-15",
+  "author": "claude",
+  "generated_at": "2026-05-14T16:30:00-04:00",
+  "valid_until": "2026-05-15T16:00:00-04:00",
+  "market_view": {
+    "spy_bias": "bullish",
+    "qqq_bias": "bullish",
+    "vix_regime": "normal",
+    "notes": "5/14 close was risk-on: SPY +0.74%, Nasdaq +1.05%, VIX 17.87 (-0.7%). Account: $24.71 portfolio, $1.05 cash. Operator adding $25 cash → post-injection $50. Defrag reclaims ~$6.21 (AMZN/CMCSA/SCHD/V) at no PDT cost. PDT 3/3 today → 2/3 Friday (only 5/8 day falls off, not 2). FRIDAY IS CATALYST-HEAVY: Trump-Xi AI-summit outcome 5/14-15, Powell→Warsh Fed transition 5/15, UMich consumer sentiment ~10am ET. NVDA earnings 5/20 AMC = 3 sessions away, position into it carries binary risk. Strategy bias: prefer broad-market + non-semis-only AI exposure (GOOGL, SPY) to limit single-name semis concentration into NVDA print."
+  },
+  "candidates": [
+    {
+      "symbol": "SMH",
+      "lane": "vwap_reclaim_v1",
+      "thesis": "Highest-conviction semis exposure because it diversifies single-name catalyst risk (16% NVDA + 9% TSM + 8% INTC + 7% AVGO + 7% AMD). With Trump-Xi AI-summit outcome dropping Friday and NVDA earnings 5/20, the ETF lets us be long the theme without an all-or-nothing single-name binary. Entry on VWAP reclaim with rising relative volume.",
+      "catalyst": "Trump-Xi AI summit outcome + NVDA earnings tailwind. BAC raised NVDA PT $300→$320. Computex tradeshow ahead.",
+      "entry_zone": { "low": 573.0, "high": 579.0 },
+      "stop": 565.0,
+      "target": 595.0,
+      "conviction": 4,
+      "max_position_pct": 0.20,
+      "valid_until": "2026-05-15T16:00:00-04:00"
+    },
+    {
+      "symbol": "GOOGL",
+      "lane": "pullback_continuation_v1",
+      "thesis": "NEW position. Pelosi recently exercised 50 GOOGL calls (5K shares at $150 strike) — high-conviction AI long signal from a tracked political portfolio. AI thesis without semis-cycle binary. Currently not held; adds diversification away from the semis-heavy book.",
+      "catalyst": "AI infrastructure + services thesis; political-trade signal (Pelosi exercise).",
+      "entry_zone": { "low": 395.0, "high": 401.0 },
+      "stop": 388.0,
+      "target": 415.0,
+      "conviction": 4,
+      "max_position_pct": 0.20,
+      "valid_until": "2026-05-15T16:00:00-04:00"
+    },
+    {
+      "symbol": "SPY",
+      "lane": "pullback_continuation_v1",
+      "thesis": "Already a slight winner (+0.31%). Adds broad-market exposure and reduces ticker fragmentation. Powell→Warsh transition Friday could whip SPY intraday — wait for the post-news pullback rather than chasing strength. With cash injection this becomes a real $8–$10 position instead of $3 fraction.",
+      "catalyst": "Risk-on tape, US-China trade optimism, strong April retail.",
+      "entry_zone": { "low": 744.0, "high": 748.0 },
+      "stop": 738.0,
+      "target": 757.0,
+      "conviction": 3,
+      "max_position_pct": 0.20,
+      "valid_until": "2026-05-15T16:00:00-04:00"
+    },
+    {
+      "symbol": "NVDA",
+      "lane": "pullback_continuation_v1",
+      "thesis": "Already our only meaningful winner (+0.87%). With earnings 5/20 AMC just 3 sessions away, treat this as a TRIM-OR-HOLD decision, not a load-up. Add only on a clean rising-support pullback AND only if SMH is leading. PDT cap means whatever we buy Friday must hold through Monday minimum. Plan to TRIM before 5/20 close to lock gains ahead of binary event.",
+      "catalyst": "Earnings 5/20; BAC PT raise to $320; Computex.",
+      "entry_zone": { "low": 232.0, "high": 235.5 },
+      "stop": 228.0,
+      "target": 245.0,
+      "conviction": 3,
+      "max_position_pct": 0.15,
+      "valid_until": "2026-05-15T16:00:00-04:00"
+    },
+    {
+      "symbol": "AAPL",
+      "lane": "pullback_continuation_v1",
+      "thesis": "Megacap diversifier. Analyst PT $400 (AI services thesis). Currently not held. Lower priority than GOOGL because the political-trade and AI-conviction signal points to GOOGL more strongly this week. Fire only if cash remains after the four higher-conviction names.",
+      "catalyst": "AI services growth thesis; megacap diversifier.",
+      "entry_zone": { "low": 296.0, "high": 300.5 },
+      "stop": 291.0,
+      "target": 310.0,
+      "conviction": 2,
+      "max_position_pct": 0.12,
+      "valid_until": "2026-05-15T16:00:00-04:00"
+    },
+    {
+      "symbol": "XLE",
+      "lane": "vwap_reclaim_v1",
+      "thesis": "OPTIONAL Pelosi-rotation diversifier — congressional disclosures show capital flowing into energy. Sector is uncorrelated to the AI/semis trade. Conviction kept at 2 because the position is a hedge, not a primary. Skip if oil is breaking down or if cash is tight after Phase 1.",
+      "catalyst": "Pelosi/congressional energy rotation; sector diversification away from AI-correlated book.",
+      "entry_zone": { "low": 56.0, "high": 57.5 },
+      "stop": 54.5,
+      "target": 60.0,
+      "conviction": 2,
+      "max_position_pct": 0.10,
+      "valid_until": "2026-05-15T16:00:00-04:00"
+    }
+  ],
+  "blocklist": [
+    "TSLA",
+    "GME",
+    "MSTR",
+    "NIO",
+    "T",
+    "F",
+    "GM",
+    "OXY",
+    "IWM",
+    "AMD",
+    "AMZN",
+    "CMCSA",
+    "SCHD",
+    "V"
+  ]
+}

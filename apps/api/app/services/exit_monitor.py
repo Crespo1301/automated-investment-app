@@ -177,7 +177,20 @@ def run_exit_check(broker: object, *, execute: bool) -> ExitCheckResult:
     if not market_is_open and not settings.allow_outside_market_hours:
         notes.append("Exit execution is locked because the regular market is closed.")
     if signals and not execution_allowed:
-        notes.append("Exit signal found, but execution is locked by INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS=false.")
+        # execution_allowed is False for two distinct reasons; report the real
+        # one. The read-only /api/risk/exit-check route always passes
+        # execute=False, so blaming the ALLOW_EXITS flag there is misleading
+        # when the flag is actually true.
+        if not settings.autopilot_allow_exits:
+            notes.append(
+                "Exit signal found, but autopilot exit execution is disabled "
+                "(INVESTMENT_APP_AUTOPILOT_ALLOW_EXITS is off)."
+            )
+        elif not execute:
+            notes.append(
+                "Exit signal found. This is a read-only preview — the autopilot "
+                "loop process submits exit orders, not this endpoint."
+            )
     notes.extend(blocked_reasons)
 
     # Surface persistent profit-locked carries so the operator sees them
@@ -373,12 +386,20 @@ def get_defragmentation_report(broker: object) -> DefragmentationReport:
         getattr(settings, "defragmentation_max_market_value_dollars", 3.0)
     )
     min_age_minutes = max(0, settings.small_win_min_holding_minutes)
+    loss_min_percent = float(
+        getattr(settings, "defragmentation_loss_min_percent", 1.0)
+    )
+    loss_min_age_minutes = max(
+        0,
+        int(getattr(settings, "defragmentation_loss_min_age_minutes", 2880)),
+    )
     now = datetime.now(UTC)
     cutoff = now - timedelta(minutes=min_age_minutes)
+    loss_cutoff = now - timedelta(minutes=loss_min_age_minutes)
 
     candidates: list[DefragmentationCandidate] = []
     for position in snapshot.positions:
-        if position.market_value <= 0 or position.market_value > max_value:
+        if position.market_value <= 0:
             continue
         if _has_open_sell_order(position.symbol, snapshot.orders):
             continue
@@ -386,8 +407,23 @@ def get_defragmentation_report(broker: object) -> DefragmentationReport:
         if latest_buy is None or latest_buy.filled_at is None:
             continue
         filled_at = latest_buy.filled_at.astimezone(UTC)
-        if filled_at > cutoff:
+
+        is_dust = position.market_value <= max_value and filled_at <= cutoff
+
+        loss_pct = (
+            position.unrealized_pl / position.cost_basis * 100.0
+            if position.cost_basis > 0
+            else 0.0
+        )
+        is_stale_laggard = (
+            position.market_value > max_value
+            and filled_at <= loss_cutoff
+            and loss_pct <= -loss_min_percent
+        )
+
+        if not (is_dust or is_stale_laggard):
             continue
+
         candidates.append(
             DefragmentationCandidate(
                 symbol=position.symbol,
@@ -402,6 +438,8 @@ def get_defragmentation_report(broker: object) -> DefragmentationReport:
     notes = [
         f"Lots at or below ${max_value:.2f} market value held >{min_age_minutes//60}h "
         "are listed for optional liquidation to reclaim buying power.",
+        f"Stale laggards: positions held >{loss_min_age_minutes//60}h with unrealized loss "
+        f">= {loss_min_percent:.1f}% are also surfaced.",
         "Selling these does NOT consume a PDT slot because the buy is older than today's session.",
     ]
     return DefragmentationReport(candidates=candidates, notes=notes)

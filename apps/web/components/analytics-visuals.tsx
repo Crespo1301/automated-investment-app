@@ -4,7 +4,21 @@ import type {
   PerformancePoint,
   ProviderUsageSummary,
   StrategyUsageSummary,
+  SymbolPerformanceSeries,
 } from "@/lib/contracts";
+
+// Distinct line colors for the per-symbol return chart. Cycles if a portfolio
+// ever holds more names than colors.
+const SYMBOL_LINE_COLORS = [
+  "#3B82F6",
+  "#F59E0B",
+  "#10B981",
+  "#EF4444",
+  "#A855F7",
+  "#06B6D4",
+  "#EC4899",
+  "#84CC16",
+];
 import { currencyFormatter, percentFormatter } from "@/lib/format";
 
 export function AllocationBars({
@@ -46,12 +60,15 @@ export function AllocationBars({
 export function PositionPriceBoard({
   positions,
   asOf,
+  history,
 }: {
   positions: BrokerPositionSummary[];
   // ISO timestamp of the reconciliation snapshot. Server passes
   // ``new Date().toISOString()`` so the operator can see how stale a card is
   // on a slow tape.
   asOf?: string;
+  // Optional per-symbol history; when present each card shows a return sparkline.
+  history?: SymbolPerformanceSeries[];
 }) {
   const stampLabel = (() => {
     if (!asOf) return null;
@@ -85,6 +102,24 @@ export function PositionPriceBoard({
                   100,
                   Math.max(4, (Math.abs(moveFromEntry) / PRICE_BOARD_REFERENCE) * 100),
                 );
+
+          // Per-card return sparkline from this symbol's snapshot history.
+          const series = history?.find((s) => s.symbol === position.symbol);
+          const sparkline = (() => {
+            if (!series || series.points.length < 2) return null;
+            const values = series.points.map((p) => p.unrealized_pl_percent);
+            const low = Math.min(...values);
+            const high = Math.max(...values);
+            const span = Math.max(0.0001, high - low);
+            return series.points
+              .map((p, i) => {
+                const x = (i / (series.points.length - 1)) * 100;
+                const y = 18 - ((p.unrealized_pl_percent - low) / span) * 16;
+                return `${x.toFixed(1)},${y.toFixed(1)}`;
+              })
+              .join(" ");
+          })();
+
           return (
             <article className="price-card" key={position.symbol}>
               <div className="row-top">
@@ -100,6 +135,25 @@ export function PositionPriceBoard({
                 <div className="price-stamp" aria-label="Snapshot age">
                   as of {stampLabel}
                 </div>
+              ) : null}
+              {sparkline ? (
+                <svg
+                  viewBox="0 0 100 20"
+                  preserveAspectRatio="none"
+                  role="img"
+                  aria-label={`${position.symbol} return history`}
+                  style={{ width: "100%", height: 24, marginTop: 8 }}
+                >
+                  <polyline
+                    points={sparkline}
+                    fill="none"
+                    stroke={position.unrealized_pl >= 0 ? "#10B981" : "#EF4444"}
+                    strokeWidth="1.4"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                </svg>
               ) : null}
               <div className="price-meta">
                 <span>Avg {averageEntry ? currencyFormatter(averageEntry) : "-"}</span>
@@ -121,6 +175,110 @@ export function PositionPriceBoard({
       ) : (
         <div className="empty-state">No open positions to price yet.</div>
       )}
+    </div>
+  );
+}
+
+export function SymbolPerformanceChart({
+  series,
+}: {
+  series: SymbolPerformanceSeries[];
+}) {
+  // Only symbols seen in two or more snapshots can draw a line.
+  const drawable = series.filter((s) => s.points.length >= 2);
+
+  if (drawable.length === 0) {
+    return (
+      <div className="chart-frame">
+        <div className="empty-state">
+          Per-symbol lines render once positions appear across two or more reconciliation snapshots.
+        </div>
+      </div>
+    );
+  }
+
+  // Shared timeline across every series so lines align on one x-axis even
+  // when a symbol was opened later than others.
+  const timeline = Array.from(
+    new Set(series.flatMap((s) => s.points.map((p) => p.timestamp))),
+  ).sort();
+  const xOf = (timestamp: string) =>
+    timeline.length > 1 ? (timeline.indexOf(timestamp) / (timeline.length - 1)) * 100 : 50;
+
+  // Shared y-scale (unrealized return %) so symbols are directly comparable.
+  const allPct = drawable.flatMap((s) => s.points.map((p) => p.unrealized_pl_percent));
+  const min = Math.min(0, ...allPct);
+  const max = Math.max(0, ...allPct);
+  const range = Math.max(0.0001, max - min);
+  const yOf = (pct: number) => 44 - ((pct - min) / range) * 36;
+  const zeroY = yOf(0);
+
+  return (
+    <div>
+      <div className="chart-frame">
+        <svg
+          viewBox="0 0 100 48"
+          preserveAspectRatio="none"
+          role="img"
+          aria-label="Per-symbol unrealized return curves"
+        >
+          <line
+            x1="0"
+            x2="100"
+            y1={zeroY}
+            y2={zeroY}
+            stroke="rgba(255,255,255,0.18)"
+            strokeWidth="0.3"
+            strokeDasharray="1 1"
+            vectorEffect="non-scaling-stroke"
+          />
+          {drawable.map((s, idx) => (
+            <polyline
+              key={s.symbol}
+              points={s.points
+                .map(
+                  (p) =>
+                    `${xOf(p.timestamp).toFixed(2)},${yOf(p.unrealized_pl_percent).toFixed(2)}`,
+                )
+                .join(" ")}
+              fill="none"
+              stroke={SYMBOL_LINE_COLORS[idx % SYMBOL_LINE_COLORS.length]}
+              strokeWidth="1.4"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+        </svg>
+      </div>
+      <div
+        style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", marginTop: 10 }}
+      >
+        {drawable.map((s, idx) => {
+          const latest = s.points[s.points.length - 1]?.unrealized_pl_percent ?? 0;
+          return (
+            <span
+              key={s.symbol}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: 2,
+                  display: "inline-block",
+                  backgroundColor: SYMBOL_LINE_COLORS[idx % SYMBOL_LINE_COLORS.length],
+                }}
+              />
+              <strong className="symbol">{s.symbol}</strong>
+              <span className={latest >= 0 ? "positive" : "negative"}>
+                {percentFormatter(latest)}
+              </span>
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }

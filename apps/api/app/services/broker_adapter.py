@@ -42,6 +42,15 @@ class MarketDataUnavailableError(RuntimeError):
     """Raised when live market data could not be fetched from Alpaca."""
 
 
+class PositionNotFoundError(ValueError):
+    """Raised when a broker operation targets a symbol with no open long position.
+
+    Subclasses ``ValueError`` so existing ``except ValueError`` handlers keep
+    working, while letting callers distinguish a genuine missing position
+    (HTTP 404) from a guard rejection on an existing position (HTTP 409).
+    """
+
+
 def missing_alpaca_credential_names() -> list[str]:
     """Return missing Alpaca env names without exposing configured values."""
 
@@ -425,11 +434,39 @@ class AlpacaBroker:
             )
         return results
 
-    def submit_position_market_sell(self, symbol: str) -> BrokerOrderReceipt:
-        """Submit a day market sell for the full open long position."""
+    def submit_position_market_sell(
+        self,
+        symbol: str,
+        percent: float | None = None,
+        dollars: float | None = None,
+    ) -> BrokerOrderReceipt:
+        """Submit a day market sell for an open long position.
+
+        Alpaca only accepts a share ``qty`` on a position sell, never a
+        dollar amount, so any dollar-denominated request is converted to
+        shares here against the position's live market value.
+
+        Sizing is one of three mutually exclusive forms:
+
+        - neither ``percent`` nor ``dollars``: sell the whole position.
+        - ``percent`` (1-100): sell that share of the position.
+        - ``dollars`` (> 0): sell approximately that dollar amount;
+          ``qty = position.quantity * dollars / market_value``. A dollars
+          value at or above the position's market value sells it whole.
+
+        Every partial sell guards both the trimmed proceeds and the
+        *remainder* against ``minimum_order_notional`` so a trim never
+        submits a sub-minimum order and never strands a sub-minimum,
+        unsellable lot behind it (the lesson of the $0.98 IWM lot).
+        """
 
         from alpaca.trading.enums import OrderSide, TimeInForce
         from alpaca.trading.requests import MarketOrderRequest
+
+        if percent is not None and dollars is not None:
+            raise ValueError(
+                "Specify a sell size as percent or dollars, not both."
+            )
 
         normalized_symbol = symbol.upper()
         position = next(
@@ -441,7 +478,9 @@ class AlpacaBroker:
             None,
         )
         if position is None or position.quantity <= 0:
-            raise ValueError(f"No open long position found for {normalized_symbol}.")
+            raise PositionNotFoundError(
+                f"No open long position found for {normalized_symbol}."
+            )
         if position.market_value < settings.minimum_order_notional:
             raise ValueError(
                 f"{normalized_symbol} position value is below the ${settings.minimum_order_notional:.2f} minimum order guard."
@@ -449,15 +488,68 @@ class AlpacaBroker:
         if self._has_open_sell_order(normalized_symbol):
             raise ValueError(f"An open sell order already exists for {normalized_symbol}.")
 
-        client_order_id = new_id(f"manual_exit_{normalized_symbol.lower()}")
+        # Resolve the requested size to a single fraction of the position.
+        # ``size_label`` only describes the request for the receipt/log.
+        if dollars is not None:
+            if dollars <= 0:
+                raise ValueError(
+                    f"Dollar sell amount for {normalized_symbol} must be greater than zero."
+                )
+            fraction = dollars / position.market_value
+            size_label = f"${dollars:.2f}"
+        elif percent is not None:
+            if percent <= 0:
+                raise ValueError(
+                    f"Percent sell size for {normalized_symbol} must be greater than zero."
+                )
+            fraction = percent / 100
+            size_label = f"{percent:.0f}%"
+        else:
+            fraction = 1.0
+            size_label = "100%"
+
+        # A request at or beyond the whole position is a full exit.
+        is_partial = fraction < 1.0
+        if is_partial:
+            sell_quantity = round(position.quantity * fraction, 9)
+            sell_notional = position.market_value * fraction
+            remainder_notional = position.market_value - sell_notional
+            if sell_quantity <= 0:
+                raise ValueError(
+                    f"Partial sell of {normalized_symbol} ({size_label}) rounds to zero shares."
+                )
+            if sell_notional < settings.minimum_order_notional:
+                raise ValueError(
+                    f"Partial sell of {normalized_symbol} ({size_label}) is only "
+                    f"${sell_notional:.2f}, below the ${settings.minimum_order_notional:.2f} "
+                    "minimum order guard. Sell a larger amount or the full position."
+                )
+            if remainder_notional < settings.minimum_order_notional:
+                raise ValueError(
+                    f"Partial sell of {normalized_symbol} ({size_label}) would leave "
+                    f"${remainder_notional:.2f} behind, below the "
+                    f"${settings.minimum_order_notional:.2f} minimum order guard — an "
+                    "unsellable stranded lot. Sell the full position instead."
+                )
+        else:
+            sell_quantity = position.quantity
+            sell_notional = position.market_value
+
+        order_prefix = "manual_trim" if is_partial else "manual_exit"
+        client_order_id = new_id(f"{order_prefix}_{normalized_symbol.lower()}")
         order = self.client.submit_order(
             order_data=MarketOrderRequest(
                 symbol=normalized_symbol,
-                qty=position.quantity,
+                qty=sell_quantity,
                 side=OrderSide.SELL,
                 time_in_force=TimeInForce.DAY,
                 client_order_id=client_order_id,
             )
+        )
+        sell_label = (
+            f"partial sell ({size_label} = {sell_quantity:g} sh)"
+            if is_partial
+            else "manual sell"
         )
         return BrokerOrderReceipt(
             broker_order_id=str(order.id),
@@ -465,8 +557,8 @@ class AlpacaBroker:
             status=str(order.status),
             symbol=normalized_symbol,
             side="sell",
-            submitted_notional=position.market_value,
-            raw_message=f"Alpaca accepted manual sell order with client id {client_order_id}.",
+            submitted_notional=sell_notional,
+            raw_message=f"Alpaca accepted {sell_label} order with client id {client_order_id}.",
         )
 
     def submit_position_oco_protection(self, symbol: str) -> BrokerOrderReceipt:
@@ -489,7 +581,9 @@ class AlpacaBroker:
             None,
         )
         if position is None or position.quantity <= 0:
-            raise ValueError(f"No open long position found for {normalized_symbol}.")
+            raise PositionNotFoundError(
+                f"No open long position found for {normalized_symbol}."
+            )
         if position.market_value < settings.minimum_order_notional:
             raise ValueError(
                 f"{normalized_symbol} position value is below the ${settings.minimum_order_notional:.2f} minimum order guard."

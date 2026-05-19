@@ -399,6 +399,30 @@ class PerformanceHistory(BaseModel):
     notes: list[str]
 
 
+class SymbolPerformancePoint(BaseModel):
+    """One historical point for a single holding, from a reconciliation snapshot."""
+
+    timestamp: datetime
+    market_value: float
+    unrealized_pl: float
+    unrealized_pl_percent: float
+    current_price: float | None = None
+
+
+class SymbolPerformanceSeries(BaseModel):
+    """Per-symbol time series extracted from stored portfolio snapshots."""
+
+    symbol: str
+    points: list[SymbolPerformancePoint]
+
+
+class SymbolPerformanceHistory(BaseModel):
+    """Per-symbol performance history for multi-line dashboard charts."""
+
+    series: list[SymbolPerformanceSeries]
+    notes: list[str]
+
+
 class ProviderUsageSummary(BaseModel):
     """Daily scoring provider usage summary."""
 

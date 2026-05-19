@@ -3,6 +3,7 @@ import {
   CompoundingMatrix,
   PerformanceSparkline,
   PositionPriceBoard,
+  SymbolPerformanceChart,
 } from "@/components/analytics-visuals";
 import { DashboardShell } from "@/components/dashboard-shell";
 import {
@@ -10,15 +11,17 @@ import {
   getPerformanceHistory,
   getReconciliation,
   getSafetyStatus,
+  getSymbolPerformanceHistory,
 } from "@/lib/server-data";
 import { currencyFormatter } from "@/lib/format";
 
 export default async function PortfolioPage() {
-  const [reconciliation, safety, history, recap] = await Promise.all([
+  const [reconciliation, safety, history, recap, symbolHistory] = await Promise.all([
     getReconciliation(),
     getSafetyStatus(),
     getPerformanceHistory(),
     getDailyRecap(),
+    getSymbolPerformanceHistory(),
   ]);
 
   const account = reconciliation?.account ?? null;
@@ -47,6 +50,19 @@ export default async function PortfolioPage() {
           </span>
         </div>
         <PerformanceSparkline points={history?.points ?? []} />
+      </article>
+
+      <article className="panel">
+        <div className="section-title">
+          <div>
+            <h2>Per-symbol returns</h2>
+            <p>Unrealized return for each holding — one line per symbol, rebuilt from your account snapshots.</p>
+          </div>
+          <span className="state-pill state-info">
+            {symbolHistory?.series.length ?? 0} symbols
+          </span>
+        </div>
+        <SymbolPerformanceChart series={symbolHistory?.series ?? []} />
       </article>
 
       <section className="content-grid">
@@ -99,7 +115,11 @@ export default async function PortfolioPage() {
           </div>
           <span className="state-pill state-info">broker snapshot</span>
         </div>
-        <PositionPriceBoard positions={positions} asOf={new Date().toISOString()} />
+        <PositionPriceBoard
+          positions={positions}
+          asOf={new Date().toISOString()}
+          history={symbolHistory?.series}
+        />
       </article>
 
       <article className="panel">

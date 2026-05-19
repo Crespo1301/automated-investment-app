@@ -20,12 +20,22 @@ from app.domain.trading import (
     ProtectionPlan,
     RiskLimits,
 )
-from app.domain.trading import AuditSummary, BrokerReconciliationSnapshot, SafetyState
-from app.services.broker_adapter import get_active_alpaca_broker, get_alpaca_paper_broker
+from app.domain.trading import (
+    AuditSummary,
+    BrokerReconciliationSnapshot,
+    SafetyState,
+    SymbolPerformanceHistory,
+)
+from app.services.broker_adapter import (
+    PositionNotFoundError,
+    get_active_alpaca_broker,
+    get_alpaca_paper_broker,
+)
 from app.services.audit_store import (
     get_autopilot_state,
     get_daily_trade_recap,
     get_performance_history,
+    get_symbol_performance_history,
     record_cancel_result,
     record_order_receipt,
     record_reconciliation_snapshot,
@@ -311,6 +321,17 @@ def performance_history() -> PerformanceHistory:
 
 
 @router.get(
+    "/api/performance/symbol-history",
+    response_model=SymbolPerformanceHistory,
+    tags=["performance"],
+)
+def symbol_performance_history() -> SymbolPerformanceHistory:
+    """Return per-symbol performance history for multi-line dashboard charts."""
+
+    return get_symbol_performance_history()
+
+
+@router.get(
     "/api/performance/daily-recap",
     response_model=DailyTradeRecap,
     tags=["performance"],
@@ -355,8 +376,42 @@ def cancel_open_orders() -> dict[str, object]:
     "/api/broker/positions/{symbol}/sell-market",
     tags=["broker"],
 )
-def sell_position_market(symbol: str) -> dict[str, object]:
-    """Submit a manual day market sell for an existing position."""
+def sell_position_market(
+    symbol: str,
+    force_pdt: bool = False,
+    percent: float | None = None,
+    dollars: float | None = None,
+) -> dict[str, object]:
+    """Submit a manual day market sell for an existing position.
+
+    Sizing is one of three mutually exclusive forms:
+
+    - neither ``percent`` nor ``dollars``: sell the whole position.
+    - ``percent`` (greater than 0, at most 100): sell that share.
+    - ``dollars`` (greater than 0): sell approximately that dollar amount.
+      Alpaca only accepts a share quantity on a position sell, so the
+      broker layer converts dollars to shares against live market value.
+
+    By default, refuses to submit if the sell would be a same-day round
+    trip AND the PDT cap is reached. The operator can override with
+    ``?force_pdt=true`` to explicitly spend a PDT slot.
+    """
+
+    if percent is not None and dollars is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Specify a sell size as percent or dollars, not both.",
+        )
+    if percent is not None and not 0 < percent <= 100:
+        raise HTTPException(
+            status_code=400,
+            detail="percent must be greater than 0 and at most 100.",
+        )
+    if dollars is not None and dollars <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="dollars must be greater than 0.",
+        )
 
     broker = get_active_alpaca_broker()
     clock = broker.get_market_clock()
@@ -366,10 +421,44 @@ def sell_position_market(symbol: str) -> dict[str, object]:
             detail="Market is closed. Manual market sells are blocked from the dashboard until regular hours.",
         )
 
+    if not force_pdt:
+        guard = broker.get_day_trade_guard(symbol)
+        if guard.would_be_day_trade and not guard.allowed:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Manual sell of {symbol.upper()} would create a same-day round trip and the PDT cap "
+                    f"is reached ({guard.day_trades_5_business_days}/{guard.max_day_trades_5_business_days}). "
+                    "Hold overnight, or override with ?force_pdt=true if you accept burning a slot."
+                ),
+            )
+        if guard.would_be_day_trade:
+            remaining = max(
+                0,
+                guard.max_day_trades_5_business_days - guard.day_trades_5_business_days,
+            )
+            if remaining <= 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Manual sell of {symbol.upper()} would consume a PDT slot "
+                        f"({guard.day_trades_5_business_days}/{guard.max_day_trades_5_business_days} used; "
+                        f"{remaining} remaining). Hold overnight to preserve the slot, "
+                        "or override with ?force_pdt=true."
+                    ),
+                )
+
     try:
-        receipt = broker.submit_position_market_sell(symbol)
-    except ValueError as exc:
+        receipt = broker.submit_position_market_sell(
+            symbol, percent=percent, dollars=dollars
+        )
+    except PositionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        # Guard rejection on an existing position (sub-minimum notional, an
+        # open sell already pending, partial rounds to zero). Not a missing
+        # resource — surface as a 409 conflict so the dashboard shows why.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     record_order_receipt(receipt)
     return {"broker": "alpaca", "mode": "active-config", "receipt": receipt.model_dump(mode="json")}
@@ -392,6 +481,8 @@ def protect_position_oco(symbol: str) -> dict[str, object]:
 
     try:
         receipt = broker.submit_position_oco_protection(symbol)
+    except PositionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

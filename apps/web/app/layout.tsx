@@ -13,7 +13,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      {/* suppressHydrationWarning: browser extensions (Grammarly, etc.) inject
+          attributes like data-gr-ext-installed onto <body> before React
+          hydrates. This silences that benign mismatch only — element-level,
+          not subtree-wide, so genuine markup drift is still reported. */}
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }

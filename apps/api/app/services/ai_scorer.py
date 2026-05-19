@@ -45,13 +45,19 @@ def _fallback_cap() -> float:
 
     return float(getattr(settings, "fallback_score_cap", 0.80))
 
+# Per-lane priors, deliberately compressed (0.68-0.72 spread, was 0.62-0.78).
+# A wide prior spread, at the 0.27 blend weight, structurally crowned
+# opening_range_breakout_v1 before evidence/setup/stop/market context could
+# weigh in - the autopilot became a one-lane bot. With selection now scoring
+# the best candidate per lane (see local_worker._select_lane_candidates), the
+# prior should reflect only a mild track-record tilt, not pre-decide the lane.
 STRATEGY_PRIORS = {
-    "opening_range_breakout_v1": 0.78,
-    "vwap_reclaim_v1": 0.73,
-    "relative_volume_spike_v1": 0.71,
+    "opening_range_breakout_v1": 0.72,
+    "vwap_reclaim_v1": 0.71,
+    "relative_volume_spike_v1": 0.70,
     "pullback_continuation_v1": 0.70,
-    "micro_breakout_v1": 0.66,
-    "high_upside_momentum_v1": 0.62,
+    "micro_breakout_v1": 0.69,
+    "high_upside_momentum_v1": 0.68,
 }
 
 # Phrases that the evidence/setup scorers reward. Keys must match
@@ -278,12 +284,34 @@ class TradeScorer:
         )
         raw_score = max(0.0, raw_score)
 
+        # Regime dampener: a risk-off broader market or an extreme intraday
+        # volatility regime multiplicatively haircuts the blended score. The
+        # market-context component alone only moved the score ~0.01, which
+        # was not enough to stand the bot down in hostile tape. Applied
+        # before the cap so a dampened score also clears the cap less often.
+        regime_notes: list[str] = []
+        if candidate.market_regime == "risk_off":
+            risk_off_multiplier = max(0.0, min(1.0, settings.risk_off_score_multiplier))
+            raw_score *= risk_off_multiplier
+            regime_notes.append(
+                f"Risk-off market regime applied a x{risk_off_multiplier:.2f} score dampener."
+            )
+        if candidate.volatility_regime == "extreme":
+            extreme_vol_multiplier = max(
+                0.0, min(1.0, settings.extreme_volatility_score_multiplier)
+            )
+            raw_score *= extreme_vol_multiplier
+            regime_notes.append(
+                f"Extreme volatility regime applied a x{extreme_vol_multiplier:.2f} score dampener."
+            )
+
         unknown_strategy = candidate.strategy_id not in STRATEGY_PRIORS
         fallback_cap = _fallback_cap()
         concerns: list[str] = [
             f"Fallback score is capped at {fallback_cap:.2f} because no external model context was available.",
             "Fallback used deterministic market-context checks for spread, top-of-book depth, volatility, broader market regime, and news when available.",
         ]
+        concerns.extend(regime_notes)
         if raw_score > fallback_cap:
             concerns.append(
                 f"Heuristic raw score was {raw_score:.2f}; cap is the binding constraint on this candidate."

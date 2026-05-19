@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import socket
 import time
+
+import requests.exceptions
+import urllib3.exceptions
 
 from app.core.config import settings
 from app.domain.trading import AutopilotState, PipelineRunResult
@@ -116,18 +120,88 @@ def run_autopilot_once() -> AutopilotState:
     )
 
 
+# A transient network blip (DNS failure, dropped connection, timeout — common
+# when the host machine sleeps) is not a trading or risk fault. The loop rides
+# through up to this many consecutive transient failures before falling through
+# to the kill-switch fail-safe, so a momentary outage cannot silently kill exit
+# protection for the rest of a live session.
+_TRANSIENT_ERROR_RETRY_BUDGET = 6
+
+# requests wraps urllib3 connection/DNS/timeout failures in these types; the
+# builtin and socket entries cover any non-requests network path. Broker
+# APIError and requests HTTPError (genuine non-2xx responses) are deliberately
+# excluded — those are real faults and must still trip the fail-safe.
+_TRANSIENT_NETWORK_ERRORS: tuple[type[BaseException], ...] = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    urllib3.exceptions.HTTPError,
+    ConnectionError,
+    TimeoutError,
+    socket.gaierror,
+)
+
+
+def _is_transient_network_error(exc: BaseException) -> bool:
+    """Return True if exc, or any error in its cause chain, is a network blip.
+
+    Every non-network exception stays non-transient so the kill-switch
+    fail-safe keeps firing on genuine trading, risk, or logic faults.
+    """
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, _TRANSIENT_NETWORK_ERRORS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def run_autopilot_loop(max_ticks: int | None = None) -> None:
-    """Run the local autopilot loop until disabled, interrupted, or max_ticks."""
+    """Run the local autopilot loop until disabled, interrupted, or max_ticks.
+
+    Genuine faults fail safe: the kill switch trips, autopilot disarms, and the
+    process exits. A transient network blip is not a trading fault — it is
+    retried for up to ``_TRANSIENT_ERROR_RETRY_BUDGET`` consecutive ticks so a
+    momentary DNS or connection failure cannot kill exit protection for the rest
+    of the session. Only an outage that persists past that budget falls through
+    to the same fail-safe.
+    """
 
     ticks = 0
+    transient_failures = 0
     while True:
         try:
             state = run_autopilot_once()
+            transient_failures = 0
         except Exception as exc:
-            reason = f"Autopilot error: {exc.__class__.__name__}."
-            set_kill_switch(True, reason=reason)
-            set_autopilot(False, reason=reason, last_action="disabled_by_error", last_error=str(exc))
-            raise
+            is_transient = _is_transient_network_error(exc)
+            if is_transient and transient_failures < _TRANSIENT_ERROR_RETRY_BUDGET:
+                # Stay armed and keep looping: exit protection is preserved
+                # across the blip. The heartbeat surfaces the retry state so
+                # the dashboard does not look silently healthy or silently dead.
+                transient_failures += 1
+                state = record_autopilot_heartbeat(
+                    f"transient_network_retry:{transient_failures}/"
+                    f"{_TRANSIENT_ERROR_RETRY_BUDGET}:{exc.__class__.__name__}"
+                )
+            else:
+                if is_transient:
+                    reason = (
+                        f"Autopilot error: {exc.__class__.__name__} persisted past "
+                        f"{_TRANSIENT_ERROR_RETRY_BUDGET} retries."
+                    )
+                else:
+                    reason = f"Autopilot error: {exc.__class__.__name__}."
+                set_kill_switch(True, reason=reason)
+                set_autopilot(
+                    False,
+                    reason=reason,
+                    last_action="disabled_by_error",
+                    last_error=str(exc),
+                )
+                raise
 
         ticks += 1
         if max_ticks is not None and ticks >= max_ticks:
