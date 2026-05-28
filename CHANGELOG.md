@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased - 2026-05-28 Claude pre-market defrag
+
+Claude pre-market session. No application code changes — operations
+script + handoff only. Account is essentially fully deployed ($0.29
+buying power) and four lots flagged by `/api/risk/defragmentation-candidates`
+are >24h old, so they can be recycled without a PDT slot.
+
+### Added
+
+- `scripts/morning_defrag_2026-05-28.sh` — one-shot pre-open script
+  (launched via nohup) that polls `/api/safety/status` for market open,
+  then submits `sell-market?percent=100` for EL, MDT, and NFLX. Expected
+  to free ~$8.40 of buying power for the autopilot's regime-aware
+  fallback to redeploy intraday. XLE was deliberately excluded after
+  S&P futures opened −0.3% on fresh Middle East attacks (XLE is the one
+  defensive bid into the 8:30 ET PCE print today); its structural exit
+  thesis is deferred to next week.
+- `docs/handoff-2026-05-28.md` — Claude → Codex handoff with the run
+  state, the explicit no-touch list (QQQ, SPY, NVO, PFE, XLF), market
+  context, and follow-up checklist.
+
 ## Unreleased - 2026-05-19 EOD
 
 Claude end-of-day pass. No code changed today; documentation only.
@@ -72,6 +93,11 @@ backend tests + web build, then push.
   project has a committed ESLint flat config and `apps/web` now runs
   `eslint .` instead of dropping into the deprecated `next lint` first-
   run wizard.
+- The dashboard now includes a dedicated live-arming checklist powered by
+  `/api/trading/morning-readiness`. It shows whether entries are truly
+  ready, surfaces blockers such as stale loaded config vs `.env`, and
+  explains the next operational step instead of leaving the operator to
+  decode `entry_execution_locked` from a raw heartbeat string.
 
 ### Safety Notes
 
@@ -83,6 +109,16 @@ backend tests + web build, then push.
 - No trading logic, scorer, risk-gate math, sizing, or exit decision
   logic changed — only loop error-handling and one operator-facing note
   string.
+- Operational note after the follow-up: if the heartbeat still shows
+  `entry_execution_locked`, check the **loaded process state**, not just
+  `.env`. On 2026-05-19 the local `.env` had live mode, live permission,
+  live Alpaca, and both autopilot entry/exit flags enabled, but the
+  persisted runtime state still reported `entry_execution_enabled:
+  false` because the API/loop had not been restarted after the config
+  change. Live entries require an API restart, autopilot re-arm, and a
+  fresh `--morning-readiness` / `--autopilot-status` check showing
+  `ready_for_autonomous_entries: true` and `entry_execution_enabled:
+  true`.
 
 ### Codex Handoff
 
