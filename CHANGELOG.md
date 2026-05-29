@@ -1,5 +1,80 @@
 # Changelog
 
+## Unreleased - 2026-05-28 v1.0 pre-release cleanup
+
+Final cleanup pass before tomorrow's v1.0 public showcase. Three
+parallel tracks landed on a feature branch, senior-reviewed, all
+130 tests passing.
+
+### Added
+
+- `apps/api/app/services/coid.py` — deterministic
+  `make_coid(lane, symbol, discriminator, intent_date)` returning
+  `{yyyymmdd}-{lane}-{symbol}-{sha1_8}`. Same inputs always produce
+  the same id, eliminating the ghost-script duplicate-submission bug
+  class observed on 2026-05-28. Public helpers
+  `sanitize_coid_part` and `coid_prefix_for` so callers don't have
+  to reimplement format knowledge. Backed by 7 unit tests
+  (`apps/api/tests/test_coid.py`).
+- `apps/api/app/services/brokers/` subpackage — `base.py` (186 LOC,
+  exceptions + helpers), `local_paper.py` (44, LocalPaperBroker),
+  `alpaca.py` (906, AlpacaBroker equity ops), `options.py` (163,
+  AlpacaOptionsMixin), `__init__.py` (80, factories).
+- `scripts/rotate_runtime_audit.py` — daily JSONL rotation; sorts
+  events into per-day gzipped archives under `apps/api/.runtime/archive/`,
+  rewrites live files via atomic tmp+fsync+rename, tightens perms to
+  600.
+- `scripts/analyze_lane_edge.py` — FIFO lot matching across the
+  132-fill v1 dataset (incl. archived events). Output:
+  `docs/v1-lane-analysis.md`.
+- `docs/v1-lane-analysis.md` — per-lane realized P&L, win rates, and
+  unrealized exposure summaries.
+
+### Changed
+
+- `apps/api/app/services/broker_adapter.py` — 1,382 LOC monolith
+  reduced to a 46-LOC re-export shim. Every existing import works
+  unchanged; the real code lives in the new `brokers/` subpackage.
+- `apps/api/app/services/risk_engine.py` — the legacy
+  `f"{strategy}-{candidate_id}"` coid construction now uses
+  `make_coid(...)` from the new utility.
+- `apps/api/app/services/local_worker.py` — duplicate-order
+  detection prefix now uses `coid_prefix_for(lane)` so the format
+  knowledge lives in one place.
+- `docs/strategy-micro-breakout.md` — fixed stale doc reference to
+  the daily-trade-cap (the cap was already removed in commit
+  `8e2a790`, only the doc was lagging).
+- Audit runtime dir permissions tightened to `0o700` for directories
+  and `0o600` for files. v1 ran multi-user-readable; fixed.
+
+### Storage
+
+- `apps/api/.runtime/` rotated from **282 MB live** to **46 MB live +
+  25 MB compressed archives** (75% on-disk reduction). Zero events
+  lost — line accounting verifies live + archived equals the
+  pre-rotation totals on all four append-only files.
+
+### Removed
+
+- `apps/api/.env.bak.2026-05-21` — orphaned operator backup, never
+  committed (verified via `git log --all --full-history`).
+
+### Tests
+
+- pytest: 123 → 130 passing (7 new coid tests). Web lint: clean.
+
+### Safety notes
+
+- The running `scripts/morning_rotation_2026-05-29.sh` process
+  (PID 334876, sleeping until 09:25 ET tomorrow) was deliberately
+  left untouched by this cleanup. It uses the API + Alpaca SDK
+  directly; the broker_adapter shim preserves every import it would
+  need if it ever did re-import code.
+- No risk-gate behavior changed (PDT cap, BP minimum, position-count
+  limit, quote-spread checks, lane-diversity guard all intact). The
+  v1 retrospective's daily-trade-cap "drop" was already accomplished
+  in `8e2a790`; only a stale doc remained.
+
 ## Unreleased - 2026-05-28 Claude pre-market defrag
 
 Claude pre-market session. No application code changes — operations

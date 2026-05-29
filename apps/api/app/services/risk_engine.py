@@ -8,6 +8,7 @@ from app.domain.trading import (
     ScoredTradeCandidate,
 )
 from app.core.config import settings
+from app.services.coid import make_coid
 
 
 class RiskEngine:
@@ -116,6 +117,10 @@ class RiskEngine:
             side=candidate.side,
             approved_notional=approved_notional,
             mode=portfolio_state.trading_mode,
-            client_order_id=f"{candidate.strategy_id}-{candidate.candidate_id}",
+            client_order_id=make_coid(
+                lane=candidate.strategy_id,
+                symbol=symbol,
+                discriminator=candidate.candidate_id,
+            ),
         )
         return decision, intent

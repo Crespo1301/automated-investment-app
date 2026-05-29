@@ -26,6 +26,7 @@ from app.services.broker_adapter import (
     get_alpaca_paper_broker,
     get_broker,
 )
+from app.services.coid import coid_prefix_for
 from app.services.risk_engine import RiskEngine
 from app.services.strategy_engine import AggressiveStrategyEngine
 
@@ -302,7 +303,7 @@ def run_single_cycle(
             symbol=execution_intent.symbol,
             side=execution_intent.side,
             notional=execution_intent.approved_notional,
-            strategy_prefix=f"{candidate.strategy_id}-",
+            strategy_prefix=coid_prefix_for(candidate.strategy_id),
         )
         if duplicate_order is not None:
             risk_decision = RiskDecision(
