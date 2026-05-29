@@ -64,6 +64,10 @@ rebuild, not a refactor — the v1 repo stays as the immutable teaching
 record. Top items the retrospective surfaces for v2:
 
 - Split `broker_adapter.py` (1,382 LOC) into transport + domain ops.
+  *(Already partially landed in the pre-release cleanup branch — the
+  single file is now a 46-LOC shim re-exporting from a focused
+  `services/brokers/` subpackage. v2 will complete the split by
+  collapsing the shim and updating every call site.)*
 - Replace JSONL audit with rotating SQLite.
 - Idempotent client_order_ids (eliminates the 2026-05-28 ghost-script
   bug class).

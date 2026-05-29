@@ -32,7 +32,7 @@ Current hard limits:
 
 - proposed notional cannot exceed `$2`
 - only one open position is allowed
-- daily live trade limit is `3`
+- PDT guard caps same-day exits when the rolling 5-business-day day-trade count is at the broker limit
 - daily loss pause is `$2`
 - live trading is disabled by default
 
