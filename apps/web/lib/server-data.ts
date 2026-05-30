@@ -4,6 +4,7 @@ import type {
   DailyTradeRecap,
   DefragmentationReport,
   ExitCheckResult,
+  MorningReadiness,
   PerformanceHistory,
   ProfitLockReport,
   ProtectionPlan,
@@ -67,6 +68,10 @@ export function getSymbolPerformanceHistory() {
 
 export function getTradingConfig() {
   return getApi<RiskLimits>("/api/trading/config");
+}
+
+export function getMorningReadiness() {
+  return getApi<MorningReadiness>("/api/trading/morning-readiness");
 }
 
 export type OptionsCycleRecord = {

@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { ArmingChecklist } from "@/components/arming-checklist";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { LivePerformancePanel } from "@/components/live-performance-panel";
 import { ProviderBars, SessionScorecard } from "@/components/analytics-visuals";
@@ -6,6 +7,7 @@ import {
   apiBaseUrl,
   getDailyRecap,
   getExitCheck,
+  getMorningReadiness,
   getProtectionPlan,
   getReconciliation,
   getSafetyStatus,
@@ -153,12 +155,13 @@ async function protectPosition(formData: FormData) {
 }
 
 export default async function HomePage() {
-  const [reconciliation, safety, protectionPlan, exitCheck, dailyRecap] = await Promise.all([
+  const [reconciliation, safety, protectionPlan, exitCheck, dailyRecap, morningReadiness] = await Promise.all([
     getReconciliation(),
     getSafetyStatus(),
     getProtectionPlan(),
     getExitCheck(),
     getDailyRecap(),
+    getMorningReadiness(),
   ]);
 
   const account = reconciliation?.account ?? null;
@@ -385,6 +388,8 @@ export default async function HomePage() {
         </div>
 
         <div className="stack">
+          <ArmingChecklist readiness={morningReadiness} />
+
           <article className="panel">
             <div className="section-title">
               <div>

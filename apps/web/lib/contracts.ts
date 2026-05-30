@@ -262,3 +262,15 @@ export type AuditSummary = {
   market_clock?: MarketClockStatus | null;
   notes: string[];
 };
+
+export type MorningReadiness = {
+  ready_for_watch_mode: boolean;
+  ready_for_autonomous_entries: boolean;
+  blockers: string[];
+  account: BrokerAccountStatus;
+  market_clock: MarketClockStatus;
+  safety_state: SafetyState;
+  autopilot_state: AutopilotState;
+  risk_limits: RiskLimits;
+  notes: string[];
+};

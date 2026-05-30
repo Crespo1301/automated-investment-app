@@ -1,6 +1,29 @@
 # Changelog
 
-## Unreleased - 2026-05-28 v1.0 pre-release cleanup
+## v1.0 - 2026-05-29
+
+Public showcase release for the local-first autonomous trading v1. The
+release captures the working Alpaca live-trading scaffold, dashboard,
+risk gates, audit rotation, lane analysis, and operator handoff docs
+before the planned v2 rebuild.
+
+### Release closeout
+
+- Package metadata updated from `0.2.0` to `1.0.0`.
+- The live-arming checklist documented in the 2026-05-19 changelog is
+  now wired into `/` and `/settings` via
+  `apps/web/components/arming-checklist.tsx` and
+  `/api/trading/morning-readiness`.
+- `docs/handoff-2026-05-28.md` records the 2026-05-29 release review
+  context and validation expectations.
+
+### Validation
+
+- `pytest -q`
+- `npm run build:web`
+- `npm run lint:web`
+
+## 2026-05-28 v1.0 pre-release cleanup
 
 Final cleanup pass before tomorrow's v1.0 public showcase. Three
 parallel tracks landed on a feature branch, senior-reviewed, all

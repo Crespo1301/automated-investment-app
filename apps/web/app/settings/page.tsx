@@ -1,7 +1,9 @@
+import { ArmingChecklist } from "@/components/arming-checklist";
 import { ProviderPosture } from "@/components/analytics-visuals";
 import { DashboardShell } from "@/components/dashboard-shell";
 import {
   getDailyRecap,
+  getMorningReadiness,
   getReconciliation,
   getSafetyStatus,
 } from "@/lib/server-data";
@@ -17,10 +19,11 @@ const handoffItems = [
 ];
 
 export default async function SettingsPage() {
-  const [reconciliation, safety, recap] = await Promise.all([
+  const [reconciliation, safety, recap, morningReadiness] = await Promise.all([
     getReconciliation(),
     getSafetyStatus(),
     getDailyRecap(),
+    getMorningReadiness(),
   ]);
   const account = reconciliation?.account ?? null;
   const autopilot = safety?.autopilot_state;
@@ -50,6 +53,8 @@ export default async function SettingsPage() {
           fundedOpenAi={fundedOpenAi}
         />
       </article>
+
+      <ArmingChecklist readiness={morningReadiness} />
 
       <section className="content-grid">
         <article className="panel">
