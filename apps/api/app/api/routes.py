@@ -13,6 +13,7 @@ from app.domain.trading import (
     BrokerAccountStatus,
     DailyTradeRecap,
     DefragmentationReport,
+    ExecutionIntent,
     ExitCheckResult,
     PipelineRunResult,
     PerformanceHistory,
@@ -60,6 +61,7 @@ from app.services.local_worker import (
     run_single_cycle,
 )
 from app.core.config import settings
+from app.services.coid import coid_prefix_for, make_coid
 from app.services.options_worker import recent_options_records
 from app.services.protection_plan import build_protection_plan
 from app.services.readiness import get_morning_readiness
@@ -460,6 +462,137 @@ def sell_position_market(
         # resource — surface as a 409 conflict so the dashboard shows why.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    record_order_receipt(receipt)
+    return {"broker": "alpaca", "mode": "active-config", "receipt": receipt.model_dump(mode="json")}
+
+
+@router.post(
+    "/api/broker/positions/{symbol}/buy-market",
+    tags=["broker"],
+)
+def buy_position_market(
+    symbol: str,
+    dollars: float,
+    force: bool = False,
+) -> dict[str, object]:
+    """Submit a manual notional market BUY for a discretionary, operator-chosen entry.
+
+    This is the founded-entry path: an operator (or supervising Claude
+    session) names the symbol and dollar size directly, instead of letting
+    the deterministic scorer pick the candidate. It reuses the same broker
+    submit path and the same risk gates the autopilot honors:
+
+    - market-hours only (regular session);
+    - spread guard (rejects if the live quote is wider than
+      ``max_entry_spread_bps``);
+    - cash-reserve + per-trade buying-power discipline (rejects a size that
+      would breach the reserve or exceed available buying power);
+    - ``max_open_positions`` cap for *new* symbols (adding to an existing
+      lot is always allowed);
+    - duplicate-order suppression within the session lookback window;
+    - an idempotent ``client_order_id`` keyed on (UTC date, symbol, size),
+      so an accidental re-submit of the same intent is a broker-side no-op.
+
+    A fresh buy is the *opening* leg, so it never consumes a PDT day-trade
+    slot on its own. ``force=true`` overrides the soft guards (spread,
+    size, position-count) for a deliberate operator decision; it cannot
+    override the market-hours or minimum-notional hard guards.
+    """
+
+    normalized = symbol.upper().strip()
+    if dollars <= 0:
+        raise HTTPException(status_code=400, detail="dollars must be greater than 0.")
+    if dollars < settings.minimum_order_notional:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Buy size ${dollars:.2f} is below the ${settings.minimum_order_notional:.2f} "
+                "minimum order notional."
+            ),
+        )
+
+    broker = get_active_alpaca_broker()
+    clock = broker.get_market_clock()
+    if not clock.is_open:
+        raise HTTPException(
+            status_code=409,
+            detail="Market is closed. Manual market buys are blocked from the dashboard until regular hours.",
+        )
+
+    account = broker.get_account_status()
+    reserve = max(0.0, account.portfolio_value * settings.cash_reserve_percent_of_portfolio)
+    available = account.buying_power - reserve
+    if not force and dollars > available:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Buy size ${dollars:.2f} exceeds available buying power after the "
+                f"{settings.cash_reserve_percent_of_portfolio:.0%} cash reserve "
+                f"(buying_power ${account.buying_power:.2f} - reserve ${reserve:.2f} = ${available:.2f}). "
+                "Lower the size or pass ?force=true to override the reserve."
+            ),
+        )
+    if dollars > account.buying_power:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Buy size ${dollars:.2f} exceeds total buying power ${account.buying_power:.2f}. "
+                "This hard guard cannot be forced."
+            ),
+        )
+
+    held = {p.symbol.upper() for p in broker.list_positions()}
+    if not force and normalized not in held and len(held) >= settings.max_open_positions:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Book is full at {len(held)}/{settings.max_open_positions} positions and "
+                f"{normalized} is not already held. Free a slot first or pass ?force=true."
+            ),
+        )
+
+    if not force:
+        events = broker.list_watchlist_market_events([normalized])
+        event = next((e for e in events if e.symbol.upper() == normalized), None)
+        if event is not None and event.spread_bps is not None:
+            if event.spread_bps > settings.max_entry_spread_bps:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"{normalized} quote spread is {event.spread_bps:.1f} bps, wider than the "
+                        f"{settings.max_entry_spread_bps:.0f} bps entry guard. Wait for tighter "
+                        "liquidity or pass ?force=true."
+                    ),
+                )
+
+    duplicate = broker.has_open_duplicate_order(
+        normalized,
+        side="buy",
+        notional=dollars,
+        strategy_prefix=coid_prefix_for("manual_entry"),
+    )
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"An open manual buy for {normalized} at ~${dollars:.2f} already exists "
+                f"(order {duplicate.broker_order_id}). Not submitting a duplicate."
+            ),
+        )
+
+    intent = ExecutionIntent(
+        candidate_id="manual_entry",
+        symbol=normalized,
+        side="buy",
+        approved_notional=round(dollars, 2),
+        mode="live" if settings.allow_live_trading else "paper",
+        client_order_id=make_coid(
+            lane="manual_entry",
+            symbol=normalized,
+            discriminator=f"{normalized}:{round(dollars, 2)}",
+        ),
+    )
+    receipt = broker.submit_order(intent)
     record_order_receipt(receipt)
     return {"broker": "alpaca", "mode": "active-config", "receipt": receipt.model_dump(mode="json")}
 
