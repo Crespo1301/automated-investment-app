@@ -65,3 +65,56 @@ def test_transient_network_error_classifier_is_narrowed_to_retryable_cases() -> 
 
     assert _is_transient_network_error(urllib3.exceptions.HTTPError("generic http failure")) is False
 
+
+
+def test_loop_self_heals_through_transient_outage(monkeypatch) -> None:
+    """A transient network outage must NOT trip the kill switch or exit.
+
+    The loop should ride the blips (backing off) and resume, so exit
+    protection survives an overnight host-sleep without a manual restart.
+    """
+
+    import app.services.autopilot as autopilot
+    from app.services.audit_store import get_safety_state, set_autopilot
+
+    set_autopilot(True, reason="test arm", last_action="armed")
+    disabled_state = autopilot.get_autopilot_state().model_copy(update={"enabled": False})
+
+    calls = {"n": 0}
+
+    def fake_once():
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise requests.exceptions.ConnectionError("offline")
+        return disabled_state
+
+    monkeypatch.setattr(autopilot, "run_autopilot_once", fake_once)
+    monkeypatch.setattr(autopilot.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(autopilot.signal, "alarm", lambda *_: 0)
+
+    autopilot.run_autopilot_loop()
+
+    assert calls["n"] == 3  # rode 2 blips, then a clean (disabled) tick ended it
+    assert get_safety_state().kill_switch_enabled is False  # outage never latched the kill switch
+
+
+def test_loop_fails_safe_on_genuine_fault(monkeypatch) -> None:
+    """A non-network fault must still trip the kill switch and disarm."""
+
+    import app.services.autopilot as autopilot
+    from app.services.audit_store import get_safety_state, set_autopilot
+
+    set_autopilot(True, reason="test arm", last_action="armed")
+
+    def fake_once():
+        raise ValueError("genuine logic fault")
+
+    monkeypatch.setattr(autopilot, "run_autopilot_once", fake_once)
+    monkeypatch.setattr(autopilot.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(autopilot.signal, "alarm", lambda *_: 0)
+
+    with pytest.raises(ValueError):
+        autopilot.run_autopilot_loop()
+
+    assert get_safety_state().kill_switch_enabled is True
+    assert autopilot.get_autopilot_state().enabled is False

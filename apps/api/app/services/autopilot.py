@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import signal
 import socket
 import time
 
@@ -120,12 +121,52 @@ def run_autopilot_once() -> AutopilotState:
     )
 
 
-# A transient network blip (DNS failure, dropped connection, timeout — common
-# when the host machine sleeps) is not a trading or risk fault. The loop rides
-# through up to this many consecutive transient failures before falling through
-# to the kill-switch fail-safe, so a momentary outage cannot silently kill exit
-# protection for the rest of a live session.
-_TRANSIENT_ERROR_RETRY_BUDGET = 6
+# Hard wall-clock bound on a single tick. The Alpaca SDK calls carry no
+# guaranteed request timeout, so on spotty internet (or when the host wakes
+# from sleep) a tick can block indefinitely — the heartbeat then silently
+# stops (a "freeze") even though the process is still alive. Every tick runs
+# under this budget so a hang surfaces as a transient timeout the loop rides
+# through, instead of freezing forever.
+_AUTOPILOT_TICK_TIMEOUT_SECONDS = 25
+
+# Defense-in-depth: bound any blocking socket op in this process so a hung
+# connection cannot outlive the tick budget even if SIGALRM is unavailable.
+_SOCKET_DEFAULT_TIMEOUT_SECONDS = 20
+
+# Capped backoff between retries while a transient network outage persists.
+# The loop NEVER gives up on a network blip — it just slows its polling and
+# resumes the moment connectivity returns.
+_TRANSIENT_BACKOFF_MIN_SECONDS = 30
+_TRANSIENT_BACKOFF_MAX_SECONDS = 120
+
+
+class _TickTimeout(TimeoutError):
+    """Raised when a single autopilot tick exceeds its wall-clock budget.
+
+    Subclasses ``TimeoutError`` so it is classified as a transient network
+    fault and rides through the self-healing retry path.
+    """
+
+
+def _install_tick_timeout_handler() -> bool:
+    """Install a SIGALRM handler that aborts a hung tick. Returns availability.
+
+    SIGALRM only works on the process main thread on Unix. When it is not
+    available (non-main thread or non-Unix), the loop falls back to the
+    process-wide socket timeout alone.
+    """
+
+    def _handler(signum: int, frame: object) -> None:  # noqa: ANN001
+        raise _TickTimeout(
+            f"autopilot tick exceeded {_AUTOPILOT_TICK_TIMEOUT_SECONDS}s wall-clock budget"
+        )
+
+    try:
+        signal.signal(signal.SIGALRM, _handler)
+        return True
+    except (ValueError, AttributeError, OSError):
+        return False
+
 
 # requests wraps urllib3 connection/DNS/timeout failures in these types; the
 # builtin and socket entries cover any non-requests network path. Broker
@@ -165,47 +206,74 @@ def _is_transient_network_error(exc: BaseException) -> bool:
 def run_autopilot_loop(max_ticks: int | None = None) -> None:
     """Run the local autopilot loop until disabled, interrupted, or max_ticks.
 
-    Genuine faults fail safe: the kill switch trips, autopilot disarms, and the
-    process exits. A transient network blip is not a trading fault — it is
-    retried for up to ``_TRANSIENT_ERROR_RETRY_BUDGET`` consecutive ticks so a
-    momentary DNS or connection failure cannot kill exit protection for the rest
-    of the session. Only an outage that persists past that budget falls through
-    to the same fail-safe.
+    Reliability semantics (v2.0):
+
+    - **Every tick is wall-clock bounded** (SIGALRM + a process-wide socket
+      timeout) so a hung SDK call surfaces as a transient timeout instead of
+      silently freezing the heartbeat.
+    - **Transient network faults self-heal.** A blip, hang, or sustained
+      outage (e.g. the host sleeping overnight) is NOT a trading fault: the
+      loop never trips the kill switch and never exits on it. It backs off with
+      a cap and keeps polling, so it resumes on its own the moment connectivity
+      returns — no manual premarket restart, no latched kill switch to clear.
+    - **Genuine faults still fail safe.** Any non-network exception trips the
+      kill switch, disarms autopilot, and exits.
+    - **Operator disable is honored even mid-outage** via a cheap local read,
+      so the loop still stops promptly when disarmed.
     """
+
+    socket.setdefaulttimeout(_SOCKET_DEFAULT_TIMEOUT_SECONDS)
+    alarm_available = _install_tick_timeout_handler()
 
     ticks = 0
     transient_failures = 0
     while True:
+        # Respect an operator disable even during a network outage. This is a
+        # local file read with no network, so it never hangs or fails the loop.
         try:
-            state = run_autopilot_once()
+            if not get_autopilot_state().enabled:
+                return
+        except Exception:
+            pass
+
+        try:
+            if alarm_available:
+                signal.alarm(_AUTOPILOT_TICK_TIMEOUT_SECONDS)
+            try:
+                state = run_autopilot_once()
+            finally:
+                if alarm_available:
+                    signal.alarm(0)
             transient_failures = 0
         except Exception as exc:
-            is_transient = _is_transient_network_error(exc)
-            if is_transient and transient_failures < _TRANSIENT_ERROR_RETRY_BUDGET:
-                # Stay armed and keep looping: exit protection is preserved
-                # across the blip. The heartbeat surfaces the retry state so
-                # the dashboard does not look silently healthy or silently dead.
+            if _is_transient_network_error(exc):
+                # Self-heal: ride the outage indefinitely. Surface the retry
+                # state on the heartbeat so the dashboard never looks silently
+                # healthy or silently dead, then back off and try again.
                 transient_failures += 1
-                state = record_autopilot_heartbeat(
-                    f"transient_network_retry:{transient_failures}/"
-                    f"{_TRANSIENT_ERROR_RETRY_BUDGET}:{exc.__class__.__name__}"
-                )
-            else:
-                if is_transient:
-                    reason = (
-                        f"Autopilot error: {exc.__class__.__name__} persisted past "
-                        f"{_TRANSIENT_ERROR_RETRY_BUDGET} retries."
+                try:
+                    record_autopilot_heartbeat(
+                        f"transient_network_retry:{transient_failures}:{exc.__class__.__name__}"
                     )
-                else:
-                    reason = f"Autopilot error: {exc.__class__.__name__}."
-                set_kill_switch(True, reason=reason)
-                set_autopilot(
-                    False,
-                    reason=reason,
-                    last_action="disabled_by_error",
-                    last_error=str(exc),
+                except Exception:
+                    pass
+                backoff = min(
+                    _TRANSIENT_BACKOFF_MAX_SECONDS,
+                    _TRANSIENT_BACKOFF_MIN_SECONDS * min(transient_failures, 4),
                 )
-                raise
+                time.sleep(backoff)
+                continue
+
+            # Genuine trading/risk/logic fault: fail safe.
+            reason = f"Autopilot error: {exc.__class__.__name__}."
+            set_kill_switch(True, reason=reason)
+            set_autopilot(
+                False,
+                reason=reason,
+                last_action="disabled_by_error",
+                last_error=str(exc),
+            )
+            raise
 
         ticks += 1
         if max_ticks is not None and ticks >= max_ticks:
