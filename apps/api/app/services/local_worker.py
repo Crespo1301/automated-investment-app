@@ -1,6 +1,9 @@
 """Local worker cycle for developing the autonomous trading loop."""
 
+import logging
 from datetime import UTC, datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 from app.core.config import (
     configured_high_vol_symbols,
@@ -350,7 +353,17 @@ def _get_cycle_events(
         return [event]
 
     if broker is not None and settings.trading_mode == "live" and settings.allow_live_trading:
-        return broker.list_watchlist_market_events(_cycle_symbols(limits.allowed_symbols))
+        window = _cycle_symbols(limits.allowed_symbols)
+        movers = _live_mover_symbols(broker)
+        if movers:
+            # Movers go first and are deduped against the rotating window so
+            # they are scanned EVERY tick (not only when their bucket comes up),
+            # while the total stays bounded by max_symbols_per_cycle.
+            keep = max(0, settings.max_symbols_per_cycle - len(movers))
+            symbols = list(dict.fromkeys(movers + window[:keep]))
+        else:
+            symbols = window
+        return broker.list_watchlist_market_events(symbols)
 
     return [
         MarketEvent(
@@ -362,6 +375,30 @@ def _get_cycle_events(
             volume=350_000,
         )
     ]
+
+
+def _live_mover_symbols(broker: AlpacaBroker | None) -> list[str]:
+    """Return today's liquid top-gainers for the offense lane.
+
+    Pulls Alpaca's live movers through the broker's read-only screener so the
+    momentum lane can catch breakouts the static universe would miss. A screener
+    failure must NEVER stall the autopilot cycle, so any error degrades to "no
+    movers" and the cycle proceeds on the static rotating universe.
+    """
+
+    if broker is None or not settings.mover_scanner_enabled:
+        return []
+    try:
+        movers = broker.list_intraday_movers(
+            top=settings.mover_scanner_top,
+            min_price=settings.mover_scanner_min_price,
+            min_change_percent=settings.mover_scanner_min_change_percent,
+            max_change_percent=settings.mover_scanner_max_change_percent,
+        )
+    except Exception as exc:  # screener hiccup must not break trading
+        logger.warning("mover scanner unavailable this cycle: %s", exc)
+        return []
+    return movers[: settings.mover_scanner_max_symbols]
 
 
 def _cycle_symbols(symbols: list[str]) -> list[str]:
@@ -391,6 +428,20 @@ def _cycle_symbols(symbols: list[str]) -> list[str]:
     # bucket-to-bucket even when the same symbols are being scanned.
     stride_offset = bucket % limit
     return selected[stride_offset:] + selected[:stride_offset]
+
+
+def _event_move_percent(event: MarketEvent) -> float:
+    """Absolute intraday move (%) of an event vs its previous close.
+
+    Returns a large sentinel when move data is missing so the momentum gate
+    never blocks an entry merely because price/previous-close is unavailable.
+    """
+
+    previous_close = getattr(event, "previous_close", None)
+    price = getattr(event, "price", None)
+    if not previous_close or price is None:
+        return 999.0
+    return abs((price / previous_close - 1.0) * 100.0)
 
 
 def _select_lane_candidates(
@@ -425,8 +476,15 @@ def _select_lane_candidates(
         )
         return fallback_event, []
 
+    min_move = max(0.0, settings.min_entry_move_percent)
     best_by_lane: dict[str, tuple[MarketEvent, TradeCandidate]] = {}
     for market_event in events:
+        # Momentum gate: skip flat, drifting names so the autopilot stops
+        # opening mechanical positions that just bleed and crowd out movers.
+        # Real movers clear the floor; ~0% drift cannot. Founded buy-market
+        # trades use a separate path and are not gated here.
+        if min_move > 0 and _event_move_percent(market_event) < min_move:
+            continue
         for candidate in strategy.evaluate_all(market_event):
             if candidate.symbol.upper() in blocked_symbols:
                 continue
@@ -444,15 +502,30 @@ def _blocked_entry_symbols(broker: AlpacaBroker | None) -> set[str]:
         return set()
 
     blocked = {position.symbol.upper() for position in broker.list_positions()}
-    cutoff = datetime.now(UTC) - _duplicate_lookback_delta()
+    now = datetime.now(UTC)
+    buy_cutoff = now - _duplicate_lookback_delta()
+    sell_cutoff = now - timedelta(
+        minutes=max(0, settings.reentry_cooldown_minutes_after_sell)
+    )
     for order in broker.list_recent_orders(limit=50):
         submitted_at = order.submitted_at
-        if submitted_at is not None and submitted_at.astimezone(UTC) < cutoff:
+        if submitted_at is None:
             continue
+        submitted_at = submitted_at.astimezone(UTC)
 
         side = order.side.split(".")[-1].lower()
         status = order.status.split(".")[-1].lower()
-        if side == "buy" and status in _entry_blocking_order_statuses():
+        if (
+            side == "buy"
+            and status in _entry_blocking_order_statuses()
+            and submitted_at >= buy_cutoff
+        ):
+            blocked.add(order.symbol.upper())
+        elif side == "sell" and submitted_at >= sell_cutoff:
+            # Rotation cooldown: a name we just exited (stop, take-profit, or
+            # manual rotation) must not be auto-rebought for a window, so freed
+            # slots/cash stay open for fresh movers instead of refilling the
+            # same drift name.
             blocked.add(order.symbol.upper())
 
     return blocked

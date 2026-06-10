@@ -61,6 +61,7 @@ class AlpacaBroker(AlpacaOptionsMixin):
             settings.alpaca_secret_key,
         )
         self._options_data_client = None  # lazily initialized on first chain call
+        self._screener_client = None  # lazily initialized on first mover scan
 
     def get_account_status(self) -> BrokerAccountStatus:
         """Fetch a read-only account snapshot from Alpaca."""
@@ -192,6 +193,51 @@ class AlpacaBroker(AlpacaOptionsMixin):
 
         return events
 
+    def list_intraday_movers(
+        self,
+        *,
+        top: int,
+        min_price: float,
+        min_change_percent: float,
+        max_change_percent: float,
+    ) -> list[str]:
+        """Return liquid top-gainer symbols for the live mover scanner.
+
+        Pulls Alpaca's market movers (gainers) and keeps only names that are
+        tradeable momentum candidates: priced at/above ``min_price`` and moving
+        within a sane band — above ``min_change_percent`` so it is actually
+        running, and at/below ``max_change_percent`` to skip likely M&A / halt
+        gaps (e.g. a +39% buyout) that cannot run further. Read-only; the caller
+        absorbs failures so a screener hiccup never stalls the autopilot cycle.
+        """
+
+        from alpaca.data.historical.screener import ScreenerClient
+        from alpaca.data.requests import MarketMoversRequest
+
+        if self._screener_client is None:
+            self._screener_client = ScreenerClient(
+                settings.alpaca_api_key,
+                settings.alpaca_secret_key,
+            )
+
+        movers = self._screener_client.get_market_movers(
+            MarketMoversRequest(top=max(1, top))
+        )
+
+        selected: list[str] = []
+        for mover in getattr(movers, "gainers", None) or []:
+            symbol = (getattr(mover, "symbol", "") or "").upper()
+            price = self._optional_float(getattr(mover, "price", None))
+            pct = self._optional_float(getattr(mover, "percent_change", None))
+            if not symbol or price is None or pct is None:
+                continue
+            if price < min_price:
+                continue
+            if pct < min_change_percent or pct > max_change_percent:
+                continue
+            selected.append(symbol)
+        return selected
+
     def has_market_data_access(self, symbols: list[str]) -> tuple[bool, str | None]:
         """Probe Alpaca market data access for readiness checks."""
 
@@ -256,22 +302,28 @@ class AlpacaBroker(AlpacaOptionsMixin):
             count_source = "local"
         today = _market_date(datetime.now(UTC))
         would_be_day_trade = _has_filled_buy_on_date(orders, normalized_symbol, today)
+        # PDT was eliminated 2026-06-04. A non-positive max_day_trades is the
+        # configured "no constraint" sentinel (matches the entry-path guards in
+        # local_worker); honor it here so same-day exits/stops are never blocked
+        # by a dead rule. Previously this only short-circuited entries, leaving
+        # same-day stop-losses stuck in exit_signal_locked.
+        pdt_cap_disabled = settings.max_day_trades_5_business_days <= 0
         allowed = (
-            not would_be_day_trade
+            pdt_cap_disabled
+            or not would_be_day_trade
             or day_trade_count < settings.max_day_trades_5_business_days
         )
-        reason = (
-            "Sell is not a same-day round trip."
-            if not would_be_day_trade
-            else (
-                "Day trade allowed under rolling five-business-day limit."
-                if allowed
-                else (
-                    "Day trade blocked to avoid exceeding the rolling five-business-day PDT limit "
-                    f"using {count_source} count."
-                )
+        if not would_be_day_trade:
+            reason = "Sell is not a same-day round trip."
+        elif pdt_cap_disabled:
+            reason = "Day trade allowed: PDT cap retired (max_day_trades<=0)."
+        elif allowed:
+            reason = "Day trade allowed under rolling five-business-day limit."
+        else:
+            reason = (
+                "Day trade blocked to avoid exceeding the rolling five-business-day PDT limit "
+                f"using {count_source} count."
             )
-        )
         if broker_day_trade_count is not None and broker_day_trade_count != local_day_trade_count:
             reason = (
                 f"{reason} Alpaca reports {broker_day_trade_count}; local filled-order scan reports "

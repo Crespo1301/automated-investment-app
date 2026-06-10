@@ -55,6 +55,30 @@ class Settings(BaseSettings):
     trading_mode: str = "paper"
     allowed_symbols: str = DEFAULT_ALLOWED_SYMBOLS
     max_symbols_per_cycle: int = 90
+    # --- Live intraday mover scanner (offense lane, added 2026-06-09) ---
+    # Feeds Alpaca's top gainers into the SAME scan -> score -> risk-gate
+    # pipeline each cycle so the momentum lane can catch breakouts the static
+    # universe would miss. Every existing gate still applies (spread, reserve,
+    # min-notional, local_fallback_min_score, kill-switch). Flip
+    # ``mover_scanner_enabled`` off for an instant kill.
+    mover_scanner_enabled: bool = True
+    mover_scanner_top: int = 50            # gainers to pull from Alpaca
+    mover_scanner_max_symbols: int = 12    # cap injected into each cycle window
+    mover_scanner_min_price: float = 5.0   # skip sub-$5 penny pumps
+    mover_scanner_min_change_percent: float = 3.0   # must actually be running
+    mover_scanner_max_change_percent: float = 25.0  # skip M&A/halt gaps
+    # Rotation cooldown (2026-06-09): after a position is SOLD (stop, take-profit,
+    # or manual rotation), block the autopilot from re-buying that same symbol for
+    # this many minutes. Stops the dilution loop where freeing a weak name's slot
+    # just gets refilled with the same drift name before a real mover can take it.
+    reentry_cooldown_minutes_after_sell: int = 90
+    # Momentum gate (2026-06-09): the autopilot must not open MECHANICAL
+    # positions in flat, drifting names (they just bleed and crowd out movers).
+    # An entry candidate's underlying intraday move (vs previous close) must be
+    # at least this magnitude. Real movers (+3-25%) clear it; ~0% drift names
+    # (NKE/T/CMCSA) are blocked, so freed slots/cash wait for offense. Founded
+    # buy-market trades use a separate path and are NOT gated by this.
+    min_entry_move_percent: float = 2.0
     position_size_percent: float = 0.25
     max_open_positions: int = 6
     # Cap each new entry at this fraction of the *currently available* buying
@@ -68,7 +92,7 @@ class Settings(BaseSettings):
     # entry. Scales with the account: a $10 portfolio reserves $1, a $1000
     # portfolio reserves $100. Prefer this over an absolute dollar floor so
     # the buffer doesn't cliff at Alpaca's $1 minimum as the portfolio grows.
-    cash_reserve_percent_of_portfolio: float = 0.10
+    cash_reserve_percent_of_portfolio: float = 0.30
     max_day_trades_5_business_days: int = 3
     # Trust Alpaca's ``account.daytrade_count`` as the source of truth (v2.0).
     # The local order-derived scan proved to be the stale source — it kept
@@ -111,7 +135,11 @@ class Settings(BaseSettings):
     # Stricter than ``ai_min_score`` so weakly-validated local reads don't
     # squeak through under the global 0.55 floor while a real model is
     # offline. Env override: ``INVESTMENT_APP_LOCAL_FALLBACK_MIN_SCORE``.
-    local_fallback_min_score: float = 0.65
+    # Raised 0.65 -> 0.70 (2026-06-09): the lower bar let the bot dribble cash
+    # into low-conviction drift names (XLP/NEE/KO/AAL) that just bled, crowding
+    # out slots/cash for real movers. A higher floor admits only stronger
+    # setups; genuine momentum movers clear it easily.
+    local_fallback_min_score: float = 0.70
     # Multiplicative haircut applied to the deterministic fallback's blended
     # score when the broader market regime is risk-off or intraday volatility
     # is extreme. The market-context component alone only moved the blended

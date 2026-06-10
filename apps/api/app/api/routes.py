@@ -434,7 +434,11 @@ def sell_position_market(
                     "Hold overnight, or override with ?force_pdt=true if you accept burning a slot."
                 ),
             )
-        if guard.would_be_day_trade:
+        # Slot-conservation guard only applies when a real PDT cap is in force.
+        # PDT was retired 2026-06-04 (cap configured to <=0 = unlimited), so
+        # day-trade slots are not scarce and same-day rotations must not be
+        # blocked to "preserve" a slot that no longer exists.
+        if guard.would_be_day_trade and guard.max_day_trades_5_business_days > 0:
             remaining = max(
                 0,
                 guard.max_day_trades_5_business_days - guard.day_trades_5_business_days,

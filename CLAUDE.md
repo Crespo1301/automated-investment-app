@@ -2,6 +2,42 @@
 
 Repo role: internal investment and trading scaffold, lower weekly priority than the core CSolutions business repos.
 
+> **▶ READ FIRST EVERY SESSION: [`docs/TRADING-PLAYBOOK.md`](docs/TRADING-PLAYBOOK.md)** — the single
+> source of truth for the goal, the two-sleeve book, the daily-mover strategy, the 15-min loop
+> protocol, and the startup checklist. The operator should never have to re-explain the plan;
+> read the playbook and resume.
+
+## Operating Model — THREE ALWAYS-ON LOOPS (read first, every session)
+
+The overriding goal is to grow portfolio value as much as possible. Because Claude
+cannot run continuously, three layers loop at different cadences. **Assume all three
+are already running at startup — verify their heartbeats, do not ask the operator to
+re-explain this.**
+
+1. **Autopilot — every 30 seconds** (`apps/api` worker `--autopilot-loop`). The constant
+   safety floor: stop-losses, take-profit/exit signals, mechanical entries, kill-switch
+   and risk gates. Never let it sit dead during market hours.
+2. **Cron swing bands — every 3 minutes** (`crontab` → `scripts/swing_band.py`,
+   logs to `scripts/swing_band_cron.log`). Deterministic per-symbol scale-out / scale-in
+   on the held book (trim into strength, add on dips, re-anchors each fill). Durable —
+   survives restarts, self-gates to market hours, costs no Claude credits. State +
+   per-symbol config in `scripts/swing_band_state.json`. Keep its symbol set synced with
+   the live book when positions rotate.
+3. **Claude — every ~15 minutes** (the `/loop`). The ALPHA / intelligence layer. Claude
+   uses live research and web access to **find symbols and patterns with great returns**
+   and to make founded entries/exits/rotations the bots cannot reason about.
+
+**Authority:** the bots are constant safety; **Claude's research-driven decisions OVERRIDE
+the bots** because Claude has live information they don't. Act decisively (no confirm-menu).
+Founded entries go through the manual `buy-market` / `sell-market` endpoints, which still
+honor the same risk gates (spread, reserve, min-notional, kill-switch). The 8-position cap
+is a fragmentation brake — to add a high-conviction name, rotate out the weakest thesis
+rather than forcing a 9th lot.
+
+**On startup:** check API health + autopilot heartbeat freshness, confirm the band cron is
+installed (`crontab -l`) and the web dashboard is up, then resume the 15-min loop. See the
+auto-memory `session-*-posture`, `swing-band-tool`, and `v2-operating-model` notes.
+
 ## Business Context
 
 - This repo is not a front-line client acquisition asset.
