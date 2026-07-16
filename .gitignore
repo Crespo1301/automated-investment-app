@@ -15,6 +15,10 @@ build
 .mcp.json
 .runtime/
 
+# Local runtime logs and state snapshots
+scripts/*.log
+scripts/*_state.json
+
 # Local AI tooling
 .agents/
 .claude/
