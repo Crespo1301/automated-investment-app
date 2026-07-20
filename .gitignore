@@ -23,3 +23,6 @@ scripts/*_state.json
 .agents/
 .claude/
 .code-review-graph/
+
+# Local browser QA screenshots
+.visual-checks/

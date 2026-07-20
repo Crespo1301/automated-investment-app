@@ -98,3 +98,7 @@ npm run stitch:proxy
 - Use repo-local `.codex/skills/` for Codex-side `ui-ux-pro-max` and `OpenSpec` workflows when the repo is the active target.
 - Use `.mcp.json` with `code-review-graph` after `npm run graph:build` so exploration and reviews stay token-efficient.
 - Use OpenSpec for larger trading, execution, or dashboard changes that benefit from proposal, spec, and task artifacts.
+
+## Visual QA
+
+Use the workspace runner at `/home/cresp3/scripts/visual-check.sh` after any layout, responsive, spacing, animation, or visual-polish change. Start the local dev server, capture mobile and desktop screenshots into `.visual-checks/`, and inspect the rendered pixels before calling the work done. See `VISUAL-QA.md`.
