@@ -87,7 +87,8 @@ function Ticker({ account, marketClock, killSwitchEnabled, portfolioDelta, openP
   const cash = account ? currencyFormatter(account.cash) : "-";
   const buying = account ? currencyFormatter(account.buying_power) : "-";
   const dt = account?.daytrade_count;
-  const pdt = dt === null || dt === undefined ? "N/A" : `${dt}/3`;
+  // PDT cap retired 2026-06-04 — show the raw day-trade count with no "/3" ceiling.
+  const pdt = dt === null || dt === undefined ? "N/A" : `${dt}`;
   const deltaClass =
     portfolioDelta == null
       ? ""
@@ -121,9 +122,9 @@ function Ticker({ account, marketClock, killSwitchEnabled, portfolioDelta, openP
         <span className="ticker-meta">{openPositions} open</span>
       </div>
       <div className="ticker-cell">
-        <span className="ticker-label">PDT window</span>
+        <span className="ticker-label">Day-trades</span>
         <span className="ticker-value">{pdt}</span>
-        <span className="ticker-meta">rolling 5 BD</span>
+        <span className="ticker-meta">PDT retired · no cap</span>
       </div>
       <div className="ticker-cell">
         <span className="ticker-label">Session</span>

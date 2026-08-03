@@ -42,7 +42,7 @@ export default async function RiskPage() {
           <div className="section-title">
             <div>
               <h2>Profit Locks</h2>
-              <p>Take-profit signals held by PDT, queued as next-session exit priorities.</p>
+              <p>Take-profit signals queued as exit priorities. Day-trade cap retired — these now clear same-session.</p>
             </div>
             <span className={profitLocks?.entries.length ? "state-pill state-warning" : "state-pill state-healthy"}>
               {profitLocks?.entries.length ? `${profitLocks.entries.length} locked` : "clear"}
@@ -76,7 +76,7 @@ export default async function RiskPage() {
           <div className="section-title">
             <div>
               <h2>Defragmentation</h2>
-              <p>Stale tiny lots that can reclaim buying power without spending a PDT slot.</p>
+              <p>Stale tiny lots that can be rotated to reclaim buying power for stronger setups.</p>
             </div>
             <span className={defrag?.candidates.length ? "state-pill state-info" : "state-pill state-healthy"}>
               {defrag?.candidates.length ? `${defrag.candidates.length} candidates` : "none"}
@@ -109,8 +109,8 @@ export default async function RiskPage() {
         <article className="panel">
           <div className="section-title">
             <div>
-              <h2>PDT window</h2>
-              <p>Backed by the rolling day-trade guard. Caps same-day exits and fresh trapped entries.</p>
+              <h2>Day-trade activity</h2>
+              <p>PDT cap retired 2026-06-04. Count is informational — no ceiling on entries or same-day exits.</p>
             </div>
           </div>
           <PdtMeter daytradeCount={account?.daytrade_count} />
@@ -150,8 +150,8 @@ export default async function RiskPage() {
             </div>
           </div>
           <p className="thesis" style={{ marginTop: 12 }}>
-            No raw daily order cap. Entries flow through risk, buying-power, open-position, PDT-slot, min-notional,
-            and kill-switch checks. Same-day exits honor the PDT meter above.
+            No raw daily order cap and no day-trade cap (PDT retired 2026-06-04). Entries flow through risk,
+            buying-power, open-position, min-notional, and kill-switch checks. Same-day exits are always honored.
           </p>
         </article>
       </section>

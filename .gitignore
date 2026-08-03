@@ -18,6 +18,9 @@ build
 # Local runtime logs and state snapshots
 scripts/*.log
 scripts/*_state.json
+scripts/morning_rotation_NOW.py
+scripts/swing_band.py
+scripts/swing_band_runner.sh
 
 # Local AI tooling
 .agents/

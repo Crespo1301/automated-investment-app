@@ -590,48 +590,27 @@ export function CompoundingMatrix({
 }
 
 export function PdtMeter({ daytradeCount }: { daytradeCount?: number | null }) {
+  // PDT rule eliminated 2026-06-04 (SEC/FINRA Rule 4210 amendment). Verified live
+  // on the Alpaca account 2026-06-08 (pattern_day_trader=false, daytrade_count=0
+  // despite recent day activity). The day-trade cap is retired: this meter is now
+  // informational only — no ceiling, no same-day-exit block, no trapped-entry math.
+  const offline = daytradeCount === null || daytradeCount === undefined;
   const used = daytradeCount ?? 0;
-  const cells = [0, 1, 2].map((i) => {
-    if (i >= used) {
-      return "pdt-cell";
-    }
-    if (used >= 3) {
-      return "pdt-cell is-danger";
-    }
-    if (used === 2) {
-      return "pdt-cell is-warn";
-    }
-    return "pdt-cell is-used";
-  });
-
-  const stateLabel =
-    daytradeCount === null || daytradeCount === undefined
-      ? "PDT count offline"
-      : used >= 3
-        ? "Day-trade ceiling - same-day sells blocked"
-        : used === 2
-          ? "One day-trade left in window"
-          : `${3 - used} day-trades available`;
 
   return (
     <div>
-      <div className="pdt-meter" aria-label="Pattern Day Trader window usage">
-        <div className="pdt-cells">
-          {cells.map((cls, i) => (
-            <span className={cls} key={i} />
-          ))}
-        </div>
+      <div className="pdt-meter" aria-label="Day-trade activity (rule retired)">
         <div className="pdt-readout">
-          <strong>
-            {daytradeCount === null || daytradeCount === undefined ? "-" : `${used}/3`}
-          </strong>
-          <span>5 BD window</span>
+          <strong>{offline ? "—" : used}</strong>
+          <span>day-trades · 5 BD window</span>
         </div>
+        <span className="pdt-retired-badge">PDT RETIRED</span>
       </div>
       <p className="thesis" style={{ marginTop: 10 }}>
-        {stateLabel}. At the cap, new intraday entries are blocked too — a stop-loss on a fresh
-        buy would otherwise be locked out the same session. Strategies tagged as swing-safe in
-        settings remain eligible.
+        The Pattern Day Trader cap was eliminated on <strong>2026-06-04</strong> and Alpaca now
+        reports the account as non-PDT. Intraday rotation is unrestricted — the engine no longer
+        rejects or downsizes entries on day-trade slots, and same-day exits are always honored.
+        The count above is shown for awareness only; it is not a ceiling.
       </p>
     </div>
   );

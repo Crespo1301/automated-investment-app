@@ -172,7 +172,8 @@ def run_exit_check(broker: object, *, execute: bool) -> ExitCheckResult:
             f"and at least {settings.small_win_min_holding_minutes} holding minutes."
         )
     notes.append(
-        "PDT allocator reserves scarce day-trade slots for stop-losses and high-value exits before small wins."
+        "PDT cap retired 2026-06-04: day-trade slots are unlimited, so exits execute on signal priority "
+        "(stop-losses and high-value exits first) without rationing same-day sells."
     )
     if not market_is_open and not settings.allow_outside_market_hours:
         notes.append("Exit execution is locked because the regular market is closed.")

@@ -1095,11 +1095,26 @@ button {
 .pdt-meter {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
   padding: 14px;
   border: 1px solid var(--line);
   background: var(--panel-2);
   border-radius: 3px;
+}
+
+.pdt-retired-badge {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  border-radius: 3px;
+  color: #107c10;
+  background: rgba(16, 124, 16, 0.1);
+  border: 1px solid rgba(16, 124, 16, 0.4);
+  white-space: nowrap;
 }
 
 .pdt-cells {
@@ -1134,7 +1149,7 @@ button {
 .pdt-readout {
   display: grid;
   gap: 2px;
-  text-align: right;
+  text-align: left;
   font-family: var(--mono);
   min-width: 80px;
 }
