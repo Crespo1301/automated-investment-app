@@ -243,7 +243,8 @@ It does not submit to Alpaca unless:
 
 1. `INVESTMENT_APP_TRADING_MODE=live`
 2. `INVESTMENT_APP_ALLOW_LIVE_TRADING=true`
-3. Alpaca credentials are configured
+3. `INVESTMENT_APP_OPERATOR_API_TOKEN` is configured and supplied by the caller
+4. Alpaca credentials are configured
 
 ## Live Trading Readiness
 

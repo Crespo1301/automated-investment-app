@@ -51,6 +51,7 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     app_name: str = "Automated Investment API"
+    operator_api_token: str | None = None
     base_currency: str = "USD"
     trading_mode: str = "paper"
     allowed_symbols: str = DEFAULT_ALLOWED_SYMBOLS

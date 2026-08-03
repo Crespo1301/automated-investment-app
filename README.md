@@ -102,6 +102,11 @@ The dashboard is an operator console, not a set-and-forget trading bot. Keep ear
 live usage attended and tiny while the app is still building persistent history,
 review tools, and safer automation.
 
+Live trading controls require an operator API token. Set
+`INVESTMENT_APP_OPERATOR_API_TOKEN` in the FastAPI env and the matching
+`INVESTMENT_WEB_OPERATOR_API_TOKEN` in the web dashboard env before using
+mutating dashboard actions against a live-enabled API.
+
 Autopilot is now a supervised local loop:
 
 - Dashboard **Enable** only arms the state after you type `ENABLE AUTO`.
@@ -252,6 +257,7 @@ python -m app.worker --autopilot-loop
 ## Environment Notes
 
 - `apps/web` reads `INVESTMENT_WEB_API_BASE_URL`, defaulting to `http://127.0.0.1:8000`
+- `apps/web` sends `INVESTMENT_WEB_OPERATOR_API_TOKEN` as a bearer token for mutating API actions when configured
 - start the API before the dashboard if you want live paper-account data
 - Alpaca verification or account funding does not imply permission to increase sizing or unattended execution
 - do not enable or expand live execution without explicit approval and a current broker reconciliation

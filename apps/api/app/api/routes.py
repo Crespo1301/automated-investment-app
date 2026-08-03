@@ -1,6 +1,8 @@
 """API routes for the scaffolded control plane."""
 
-from fastapi import APIRouter, HTTPException
+from secrets import compare_digest
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from app.domain.models import (
     DashboardSnapshot,
@@ -68,6 +70,32 @@ from app.services.readiness import get_morning_readiness
 
 
 router = APIRouter()
+
+
+def require_operator_token(
+    authorization: str | None = Header(default=None),
+    x_operator_token: str | None = Header(default=None),
+) -> None:
+    """Require an operator token before API routes can mutate trading state."""
+
+    configured_token = settings.operator_api_token
+    if not configured_token:
+        if settings.trading_mode == "live" or settings.allow_live_trading:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Operator API token is required before live trading controls can be used.",
+            )
+        return
+
+    provided_token = x_operator_token
+    if authorization and authorization.lower().startswith("bearer "):
+        provided_token = authorization[7:].strip()
+
+    if not provided_token or not compare_digest(provided_token, configured_token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Valid operator token required.",
+        )
 
 
 @router.get("/", tags=["system"])
@@ -145,6 +173,7 @@ def trading_morning_readiness() -> dict[str, object]:
     "/api/trading/local-cycle",
     response_model=PipelineRunResult,
     tags=["trading"],
+    dependencies=[Depends(require_operator_token)],
 )
 def trading_local_cycle() -> PipelineRunResult:
     """Run one safe local pipeline cycle against demo market data."""
@@ -156,6 +185,7 @@ def trading_local_cycle() -> PipelineRunResult:
     "/api/trading/run-cycle",
     response_model=PipelineRunResult,
     tags=["trading"],
+    dependencies=[Depends(require_operator_token)],
 )
 def trading_run_cycle() -> PipelineRunResult:
     """Run one configured trading cycle through the active risk and broker path."""
@@ -167,6 +197,7 @@ def trading_run_cycle() -> PipelineRunResult:
     "/api/trading/queue-for-open",
     response_model=PipelineRunResult,
     tags=["trading"],
+    dependencies=[Depends(require_operator_token)],
 )
 def trading_queue_for_open() -> PipelineRunResult:
     """Queue one guarded regular-session order while the market is closed."""
@@ -189,6 +220,7 @@ def autopilot_status() -> AutopilotState:
     "/api/autopilot/enable",
     response_model=AutopilotState,
     tags=["autopilot"],
+    dependencies=[Depends(require_operator_token)],
 )
 def autopilot_enable(reason: str = "Enabled from dashboard.") -> AutopilotState:
     """Arm autopilot. A separate local loop process must still be running."""
@@ -200,6 +232,7 @@ def autopilot_enable(reason: str = "Enabled from dashboard.") -> AutopilotState:
     "/api/autopilot/disable",
     response_model=AutopilotState,
     tags=["autopilot"],
+    dependencies=[Depends(require_operator_token)],
 )
 def autopilot_disable(reason: str = "Disabled from dashboard.") -> AutopilotState:
     """Disarm autopilot."""
@@ -211,6 +244,7 @@ def autopilot_disable(reason: str = "Disabled from dashboard.") -> AutopilotStat
     "/api/autopilot/tick",
     response_model=AutopilotState,
     tags=["autopilot"],
+    dependencies=[Depends(require_operator_token)],
 )
 def autopilot_tick() -> AutopilotState:
     """Run one supervised autopilot check."""
@@ -361,6 +395,7 @@ def options_recent(limit: int = 25) -> dict[str, object]:
 @router.post(
     "/api/broker/cancel-open-orders",
     tags=["broker"],
+    dependencies=[Depends(require_operator_token)],
 )
 def cancel_open_orders() -> dict[str, object]:
     """Cancel all currently open orders on the active broker configuration."""
@@ -377,6 +412,7 @@ def cancel_open_orders() -> dict[str, object]:
 @router.post(
     "/api/broker/positions/{symbol}/sell-market",
     tags=["broker"],
+    dependencies=[Depends(require_operator_token)],
 )
 def sell_position_market(
     symbol: str,
@@ -473,6 +509,7 @@ def sell_position_market(
 @router.post(
     "/api/broker/positions/{symbol}/buy-market",
     tags=["broker"],
+    dependencies=[Depends(require_operator_token)],
 )
 def buy_position_market(
     symbol: str,
@@ -604,6 +641,7 @@ def buy_position_market(
 @router.post(
     "/api/broker/positions/{symbol}/protect-oco",
     tags=["broker"],
+    dependencies=[Depends(require_operator_token)],
 )
 def protect_position_oco(symbol: str) -> dict[str, object]:
     """Submit broker-side OCO take-profit and stop-loss protection for a whole-share position."""
@@ -643,6 +681,7 @@ def safety_status() -> AuditSummary:
     "/api/safety/kill-switch/enable",
     response_model=SafetyState,
     tags=["safety"],
+    dependencies=[Depends(require_operator_token)],
 )
 def enable_kill_switch(reason: str = "Enabled from API.") -> SafetyState:
     """Enable the local operator kill switch."""
@@ -654,6 +693,7 @@ def enable_kill_switch(reason: str = "Enabled from API.") -> SafetyState:
     "/api/safety/kill-switch/disable",
     response_model=SafetyState,
     tags=["safety"],
+    dependencies=[Depends(require_operator_token)],
 )
 def disable_kill_switch() -> SafetyState:
     """Disable the local operator kill switch."""

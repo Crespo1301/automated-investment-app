@@ -61,9 +61,11 @@ const demoPipeline: PipelinePreview = {
 async function postApi(path: string) {
   "use server";
   try {
+    const operatorToken = process.env.INVESTMENT_WEB_OPERATOR_API_TOKEN?.trim();
     const response = await fetch(`${apiBaseUrl}${path}`, {
       cache: "no-store",
       method: "POST",
+      headers: operatorToken ? { Authorization: `Bearer ${operatorToken}` } : undefined,
     });
     if (!response.ok) {
       console.error(`Investment API request failed: ${path} returned ${response.status}`);
