@@ -35,7 +35,7 @@ over any description. The rules:
 ### Punctuation and Grammar
 
 **Em dashes**
-Severity: 5. Do not use em dashes for breaks or emphasis. Replace with commas, periods, or restructure the sentence. Maximum one per 500 words, only for genuine interruptions.
+Severity: 5. Absolutely never use the em dash character "—" for breaks, emphasis, ranges, decoration, or dramatic pause. This exact character is banned: "—". Replace it with a comma, period, colon, semicolon, parentheses, or a plain hyphen only when a hyphen is grammatically correct.
 
 **Ellipses**
 Severity: 3. Avoid ellipses for dramatic effect. Use only for actual trailing off or interrupted speech. Never stack them for pause or mood.
